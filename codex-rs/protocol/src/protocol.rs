@@ -3660,6 +3660,12 @@ pub struct CollabAgentSpawnBeginEvent {
     /// Initial prompt sent to the agent. Can be empty to prevent CoT leaking at the
     /// beginning.
     pub prompt: String,
+    /// Agent type requested by the spawn_agent call, if explicitly provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// Whether the spawn_agent call explicitly requested context forking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_context: Option<bool>,
     pub model: String,
     pub reasoning_effort: ReasoningEffortConfig,
 }
@@ -3709,6 +3715,12 @@ pub struct CollabAgentSpawnEndEvent {
     /// Initial prompt sent to the agent. Can be empty to prevent CoT leaking at the
     /// beginning.
     pub prompt: String,
+    /// Agent type requested by the spawn_agent call, if explicitly provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// Whether the spawn_agent call explicitly requested context forking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_context: Option<bool>,
     /// Effective model used by the spawned agent after inheritance and role overrides.
     pub model: String,
     /// Effective reasoning effort used by the spawned agent after inheritance and role overrides.

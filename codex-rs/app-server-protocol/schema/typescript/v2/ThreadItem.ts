@@ -88,6 +88,14 @@ receiverThreadIds: Array<string>,
  */
 prompt: string | null,
 /**
+ * Agent type requested for the spawned agent, when explicitly provided.
+ */
+agentType: string | null,
+/**
+ * Context forking value requested for the spawned agent, when explicitly provided.
+ */
+forkContext: boolean | null,
+/**
  * Model requested for the spawned agent, when applicable.
  */
 model: string | null,

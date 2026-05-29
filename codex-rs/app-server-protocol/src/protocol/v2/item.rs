@@ -323,6 +323,10 @@ pub enum ThreadItem {
         receiver_thread_ids: Vec<String>,
         /// Prompt text sent as part of the collab tool call, when available.
         prompt: Option<String>,
+        /// Agent type requested for the spawned agent, when explicitly provided.
+        agent_type: Option<String>,
+        /// Context forking value requested for the spawned agent, when explicitly provided.
+        fork_context: Option<bool>,
         /// Model requested for the spawned agent, when applicable.
         model: Option<String>,
         /// Reasoning effort requested for the spawned agent, when applicable.

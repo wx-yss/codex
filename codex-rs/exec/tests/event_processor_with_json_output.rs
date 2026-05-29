@@ -713,6 +713,8 @@ fn collab_spawn_begin_and_end_emit_item_events() {
                 sender_thread_id: "thread-parent".to_string(),
                 receiver_thread_ids: Vec::new(),
                 prompt: Some("draft a plan".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: None,
                 agents_states: std::collections::HashMap::new(),
@@ -730,6 +732,8 @@ fn collab_spawn_begin_and_end_emit_item_events() {
                 sender_thread_id: "thread-parent".to_string(),
                 receiver_thread_ids: vec!["thread-child".to_string()],
                 prompt: Some("draft a plan".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: None,
                 agents_states: std::collections::HashMap::from([(

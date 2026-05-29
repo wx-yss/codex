@@ -4,6 +4,7 @@ expression: snapshot
 ---
 • Spawned Robie [explorer] (gpt-5 high)
   └ Compute 11! and reply with just the integer result.
+    agent_type=explorer fork_context=false
 
 • Sent input to Robie [explorer]
   └ Please continue and return the answer only.

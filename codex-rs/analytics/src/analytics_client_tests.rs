@@ -3691,6 +3691,8 @@ async fn turn_event_counts_completed_tool_items() {
             sender_thread_id: "thread-2".to_string(),
             receiver_thread_ids: vec!["thread-child".to_string()],
             prompt: Some("help".to_string()),
+            agent_type: None,
+            fork_context: None,
             model: Some("gpt-5".to_string()),
             reasoning_effort: None,
             agents_states: Default::default(),

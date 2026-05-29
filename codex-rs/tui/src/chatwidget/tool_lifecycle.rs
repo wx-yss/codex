@@ -115,17 +115,16 @@ impl ChatWidget {
         else {
             return;
         };
-        if matches!(tool, CollabAgentTool::SpawnAgent)
-            && let Some(spawn_request) = multi_agents::spawn_request_summary(&item)
-        {
-            self.pending_collab_spawn_requests
-                .insert(id.clone(), spawn_request);
-        }
-
-        let cached_spawn_request = if matches!(tool, CollabAgentTool::SpawnAgent)
-            && !matches!(status, CollabAgentToolCallStatus::InProgress)
-        {
-            self.pending_collab_spawn_requests.remove(id)
+        let cached_spawn_request = if matches!(tool, CollabAgentTool::SpawnAgent) {
+            if matches!(status, CollabAgentToolCallStatus::InProgress) {
+                if let Some(spawn_request) = multi_agents::spawn_request_summary(&item) {
+                    self.pending_collab_spawn_requests
+                        .insert(id.clone(), spawn_request);
+                }
+                None
+            } else {
+                self.pending_collab_spawn_requests.remove(id)
+            }
         } else {
             None
         };

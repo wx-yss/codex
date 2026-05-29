@@ -74,6 +74,8 @@ async fn handle_spawn_agent(
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
                 prompt: prompt.clone(),
+                agent_type: None,
+                fork_context: None,
                 model: args.model.clone().unwrap_or_default(),
                 reasoning_effort: args.reasoning_effort.unwrap_or_default(),
             }
@@ -202,6 +204,8 @@ async fn handle_spawn_agent(
                 new_agent_nickname,
                 new_agent_role,
                 prompt,
+                agent_type: None,
+                fork_context: None,
                 model: effective_model,
                 reasoning_effort: effective_reasoning_effort,
                 status,

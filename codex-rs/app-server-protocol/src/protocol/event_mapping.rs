@@ -80,6 +80,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: begin_event.sender_thread_id.to_string(),
                 receiver_thread_ids: Vec::new(),
                 prompt: Some(begin_event.prompt),
+                agent_type: begin_event.agent_type,
+                fork_context: begin_event.fork_context,
                 model: Some(begin_event.model),
                 reasoning_effort: Some(begin_event.reasoning_effort),
                 agents_states: HashMap::new(),
@@ -119,6 +121,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: end_event.sender_thread_id.to_string(),
                 receiver_thread_ids,
                 prompt: Some(end_event.prompt),
+                agent_type: end_event.agent_type,
+                fork_context: end_event.fork_context,
                 model: Some(end_event.model),
                 reasoning_effort: Some(end_event.reasoning_effort),
                 agents_states,
@@ -139,6 +143,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: begin_event.sender_thread_id.to_string(),
                 receiver_thread_ids,
                 prompt: Some(begin_event.prompt),
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -167,6 +173,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: end_event.sender_thread_id.to_string(),
                 receiver_thread_ids: vec![receiver_id.clone()],
                 prompt: Some(end_event.prompt),
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: [(receiver_id, received_status)].into_iter().collect(),
@@ -191,6 +199,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: begin_event.sender_thread_id.to_string(),
                 receiver_thread_ids,
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -227,6 +237,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: end_event.sender_thread_id.to_string(),
                 receiver_thread_ids,
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states,
@@ -246,6 +258,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: begin_event.sender_thread_id.to_string(),
                 receiver_thread_ids: vec![begin_event.receiver_thread_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -279,6 +293,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: end_event.sender_thread_id.to_string(),
                 receiver_thread_ids: vec![receiver_id],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states,
@@ -298,6 +314,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: begin_event.sender_thread_id.to_string(),
                 receiver_thread_ids: vec![begin_event.receiver_thread_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -331,6 +349,8 @@ pub fn item_event_to_server_notification(
                 sender_thread_id: end_event.sender_thread_id.to_string(),
                 receiver_thread_ids: vec![receiver_id],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states,
@@ -453,6 +473,8 @@ pub fn item_event_to_server_notification(
 mod tests {
     use super::*;
     use codex_protocol::ThreadId;
+    use codex_protocol::protocol::AgentStatus;
+    use codex_protocol::protocol::CollabAgentSpawnEndEvent;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
@@ -492,6 +514,58 @@ mod tests {
     }
 
     #[test]
+    fn collab_spawn_end_maps_request_metadata() {
+        let sender_thread_id = ThreadId::new();
+        let receiver_thread_id = ThreadId::new();
+        let event = CollabAgentSpawnEndEvent {
+            call_id: "spawn-1".to_string(),
+            completed_at_ms: 456,
+            sender_thread_id,
+            new_thread_id: Some(receiver_thread_id),
+            new_agent_nickname: Some("Scout".to_string()),
+            new_agent_role: Some("explorer".to_string()),
+            prompt: "Explore the repo".to_string(),
+            agent_type: Some("explorer".to_string()),
+            fork_context: Some(false),
+            model: "gpt-5".to_string(),
+            reasoning_effort: codex_protocol::openai_models::ReasoningEffort::High,
+            status: AgentStatus::Running,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::CollabAgentSpawnEnd(event.clone()),
+            "thread-1",
+            "turn-1",
+        );
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::CollabAgentToolCall {
+                    id: event.call_id,
+                    tool: CollabAgentTool::SpawnAgent,
+                    status: CollabAgentToolCallStatus::Completed,
+                    sender_thread_id: sender_thread_id.to_string(),
+                    receiver_thread_ids: vec![receiver_thread_id.to_string()],
+                    prompt: Some(event.prompt),
+                    agent_type: Some("explorer".to_string()),
+                    fork_context: Some(false),
+                    model: Some(event.model),
+                    reasoning_effort: Some(event.reasoning_effort),
+                    agents_states: [(
+                        receiver_thread_id.to_string(),
+                        CollabAgentState::from(AgentStatus::Running),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+            },
+        );
+    }
+
+    #[test]
     fn collab_resume_begin_maps_to_item_started_resume_agent() {
         let event = CollabResumeBeginEvent {
             call_id: "call-1".to_string(),
@@ -520,6 +594,8 @@ mod tests {
                     sender_thread_id: event.sender_thread_id.to_string(),
                     receiver_thread_ids: vec![event.receiver_thread_id.to_string()],
                     prompt: None,
+                    agent_type: None,
+                    fork_context: None,
                     model: None,
                     reasoning_effort: None,
                     agents_states: HashMap::new(),
@@ -559,6 +635,8 @@ mod tests {
                     sender_thread_id: event.sender_thread_id.to_string(),
                     receiver_thread_ids: vec![receiver_id.clone()],
                     prompt: None,
+                    agent_type: None,
+                    fork_context: None,
                     model: None,
                     reasoning_effort: None,
                     agents_states: [(

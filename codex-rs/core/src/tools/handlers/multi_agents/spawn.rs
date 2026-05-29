@@ -51,6 +51,11 @@ async fn handle_spawn_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
+    let request_agent_type = arguments
+        .get("agent_type")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let request_fork_context = arguments.get("fork_context").and_then(JsonValue::as_bool);
     let args: SpawnAgentArgs = parse_arguments(&arguments)?;
     let role_name = args
         .agent_type
@@ -75,6 +80,8 @@ async fn handle_spawn_agent(
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
                 prompt: prompt.clone(),
+                agent_type: request_agent_type.clone(),
+                fork_context: request_fork_context,
                 model: args.model.clone().unwrap_or_default(),
                 reasoning_effort: args.reasoning_effort.unwrap_or_default(),
             }
@@ -181,6 +188,8 @@ async fn handle_spawn_agent(
                 new_agent_nickname,
                 new_agent_role,
                 prompt,
+                agent_type: request_agent_type,
+                fork_context: request_fork_context,
                 model: effective_model,
                 reasoning_effort: effective_reasoning_effort,
                 status,

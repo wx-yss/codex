@@ -57,7 +57,9 @@ struct AgentLabel<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpawnRequestSummary {
     pub(crate) model: String,
-    pub(crate) reasoning_effort: ReasoningEffortConfig,
+    pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
+    pub(crate) agent_type: Option<String>,
+    pub(crate) fork_context: Option<bool>,
 }
 
 pub(crate) fn agent_picker_status_dot_spans(is_closed: bool) -> Vec<Span<'static>> {
@@ -177,12 +179,16 @@ pub(crate) fn spawn_request_summary(item: &ThreadItem) -> Option<SpawnRequestSum
     match item {
         ThreadItem::CollabAgentToolCall {
             tool: CollabAgentTool::SpawnAgent,
-            model: Some(model),
-            reasoning_effort: Some(reasoning_effort),
+            agent_type,
+            fork_context,
+            model,
+            reasoning_effort,
             ..
         } => Some(SpawnRequestSummary {
-            model: model.clone(),
+            model: model.clone().unwrap_or_default(),
             reasoning_effort: *reasoning_effort,
+            agent_type: agent_type.clone(),
+            fork_context: *fork_context,
         }),
         _ => None,
     }
@@ -216,11 +222,12 @@ pub(crate) fn tool_call_history_cell(
                 return None;
             }
             let fallback_spawn_request = spawn_request_summary(item);
-            let spawn_request = cached_spawn_request.or(fallback_spawn_request.as_ref());
+            let merged_spawn_request =
+                merge_spawn_request_summary(cached_spawn_request, fallback_spawn_request);
             Some(spawn_end(
                 first_receiver,
                 prompt,
-                spawn_request,
+                merged_spawn_request.as_ref(),
                 &mut agent_metadata,
             ))
         }
@@ -266,6 +273,26 @@ pub(crate) fn tool_call_history_cell(
     }
 }
 
+fn merge_spawn_request_summary(
+    cached: Option<&SpawnRequestSummary>,
+    current: Option<SpawnRequestSummary>,
+) -> Option<SpawnRequestSummary> {
+    match (cached, current) {
+        (Some(cached), Some(current)) => Some(SpawnRequestSummary {
+            model: if current.model.trim().is_empty() {
+                cached.model.clone()
+            } else {
+                current.model
+            },
+            reasoning_effort: current.reasoning_effort.or(cached.reasoning_effort),
+            agent_type: current.agent_type.or_else(|| cached.agent_type.clone()),
+            fork_context: current.fork_context.or(cached.fork_context),
+        }),
+        (Some(cached), None) => Some(cached.clone()),
+        (None, current) => current,
+    }
+}
+
 fn spawn_end(
     new_thread_id: Option<ThreadId>,
     prompt: &str,
@@ -283,6 +310,9 @@ fn spawn_end(
 
     let mut details = Vec::new();
     if let Some(line) = prompt_line(prompt) {
+        details.push(line);
+    }
+    if let Some(line) = spawn_request_metadata_line(spawn_request) {
         details.push(line);
     }
     collab_event(title, details)
@@ -467,17 +497,37 @@ fn spawn_request_spans(spawn_request: Option<&SpawnRequestSummary>) -> Vec<Span<
     };
 
     let model = spawn_request.model.trim();
-    if model.is_empty() && spawn_request.reasoning_effort == ReasoningEffortConfig::default() {
+    let reasoning_effort = spawn_request.reasoning_effort.unwrap_or_default();
+    if model.is_empty() && reasoning_effort == ReasoningEffortConfig::default() {
         return Vec::new();
     }
 
     let details = if model.is_empty() {
-        format!("({})", spawn_request.reasoning_effort)
+        format!("({reasoning_effort})")
     } else {
-        format!("({model} {})", spawn_request.reasoning_effort)
+        format!("({model} {reasoning_effort})")
     };
 
     vec![Span::from(" ").dim(), Span::from(details).magenta()]
+}
+
+fn spawn_request_metadata_line(
+    spawn_request: Option<&SpawnRequestSummary>,
+) -> Option<Line<'static>> {
+    let spawn_request = spawn_request?;
+    let mut parts = Vec::new();
+    if let Some(agent_type) = spawn_request
+        .agent_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|agent_type| !agent_type.is_empty())
+    {
+        parts.push(format!("agent_type={agent_type}"));
+    }
+    if let Some(fork_context) = spawn_request.fork_context {
+        parts.push(format!("fork_context={fork_context}"));
+    }
+    (!parts.is_empty()).then(|| Line::from(Span::from(parts.join(" "))))
 }
 
 fn prompt_line(prompt: &str) -> Option<Line<'static>> {
@@ -629,6 +679,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: Some("Compute 11! and reply with just the integer result.".to_string()),
+                agent_type: Some("explorer".to_string()),
+                fork_context: Some(false),
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
@@ -649,6 +701,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: Some("Please continue and return the answer only.".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
@@ -669,6 +723,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -686,6 +742,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string(), bob_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([
@@ -712,6 +770,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
@@ -796,6 +856,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: Some(String::new()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
@@ -821,6 +883,117 @@ mod tests {
     }
 
     #[test]
+    fn spawn_details_only_show_explicit_request_metadata() {
+        let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let robie_id = ThreadId::from_string("00000000-0000-0000-0000-000000000002")
+            .expect("valid robie thread id");
+        let cell = tool_call_history_cell(
+            &ThreadItem::CollabAgentToolCall {
+                id: "call-spawn".to_string(),
+                tool: CollabAgentTool::SpawnAgent,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: sender_thread_id.to_string(),
+                receiver_thread_ids: vec![robie_id.to_string()],
+                prompt: Some("Explore the repo".to_string()),
+                agent_type: Some("explorer".to_string()),
+                fork_context: None,
+                model: Some("gpt-5".to_string()),
+                reasoning_effort: Some(ReasoningEffortConfig::High),
+                agents_states: HashMap::from([(
+                    robie_id.to_string(),
+                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
+                )]),
+            },
+            /*cached_spawn_request*/ None,
+            |thread_id| metadata_for(thread_id, robie_id, ThreadId::new()),
+        )
+        .expect("spawn item renders");
+
+        let text = cell_to_text(&cell);
+        assert!(text.contains("agent_type=explorer"));
+        assert!(!text.contains("fork_context=false"));
+    }
+
+    #[test]
+    fn completed_spawn_metadata_does_not_replace_cached_model_summary() {
+        let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let robie_id = ThreadId::from_string("00000000-0000-0000-0000-000000000002")
+            .expect("valid robie thread id");
+        let cached_spawn_request = SpawnRequestSummary {
+            model: "gpt-5".to_string(),
+            reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            agent_type: None,
+            fork_context: Some(false),
+        };
+        let cell = tool_call_history_cell(
+            &ThreadItem::CollabAgentToolCall {
+                id: "call-spawn".to_string(),
+                tool: CollabAgentTool::SpawnAgent,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: sender_thread_id.to_string(),
+                receiver_thread_ids: vec![robie_id.to_string()],
+                prompt: Some("Explore the repo".to_string()),
+                agent_type: Some("explorer".to_string()),
+                fork_context: None,
+                model: None,
+                reasoning_effort: None,
+                agents_states: HashMap::from([(
+                    robie_id.to_string(),
+                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
+                )]),
+            },
+            Some(&cached_spawn_request),
+            |thread_id| metadata_for(thread_id, robie_id, ThreadId::new()),
+        )
+        .expect("spawn item renders");
+
+        let text = cell_to_text(&cell);
+        assert!(text.contains("Spawned Robie [explorer] (gpt-5 medium)"));
+        assert!(text.contains("agent_type=explorer fork_context=false"));
+    }
+
+    #[test]
+    fn completed_spawn_model_summary_overrides_cached_model_summary() {
+        let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+            .expect("valid sender thread id");
+        let robie_id = ThreadId::from_string("00000000-0000-0000-0000-000000000002")
+            .expect("valid robie thread id");
+        let cached_spawn_request = SpawnRequestSummary {
+            model: "gpt-5".to_string(),
+            reasoning_effort: Some(ReasoningEffortConfig::Medium),
+            agent_type: None,
+            fork_context: Some(false),
+        };
+        let cell = tool_call_history_cell(
+            &ThreadItem::CollabAgentToolCall {
+                id: "call-spawn".to_string(),
+                tool: CollabAgentTool::SpawnAgent,
+                status: CollabAgentToolCallStatus::Completed,
+                sender_thread_id: sender_thread_id.to_string(),
+                receiver_thread_ids: vec![robie_id.to_string()],
+                prompt: Some("Explore the repo".to_string()),
+                agent_type: Some("explorer".to_string()),
+                fork_context: None,
+                model: Some("gpt-5.4".to_string()),
+                reasoning_effort: Some(ReasoningEffortConfig::High),
+                agents_states: HashMap::from([(
+                    robie_id.to_string(),
+                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
+                )]),
+            },
+            Some(&cached_spawn_request),
+            |thread_id| metadata_for(thread_id, robie_id, ThreadId::new()),
+        )
+        .expect("spawn item renders");
+
+        let text = cell_to_text(&cell);
+        assert!(text.contains("Spawned Robie [explorer] (gpt-5.4 high)"));
+        assert!(text.contains("agent_type=explorer fork_context=false"));
+    }
+
+    #[test]
     fn collab_resume_interrupted_snapshot() {
         let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
             .expect("valid sender thread id");
@@ -835,6 +1008,8 @@ mod tests {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![robie_id.to_string()],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([(

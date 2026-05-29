@@ -212,6 +212,8 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: Vec::new(),
                 prompt: Some("Explore the repo".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::new(),
@@ -231,6 +233,8 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![spawned_thread_id.to_string()],
                 prompt: Some("Explore the repo".to_string()),
+                agent_type: Some("explorer".to_string()),
+                fork_context: Some(false),
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
@@ -255,6 +259,10 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
     assert!(
         rendered.contains("Spawned Robie [explorer] (gpt-5 high)"),
         "expected spawn line to include agent metadata and requested model, got {rendered:?}"
+    );
+    assert!(
+        rendered.contains("agent_type=explorer fork_context=false"),
+        "expected spawn details to include request metadata, got {rendered:?}"
     );
 }
 
@@ -605,6 +613,8 @@ async fn live_app_server_collab_wait_items_render_history() {
                     other_receiver_thread_id.to_string(),
                 ],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::new(),
@@ -628,6 +638,8 @@ async fn live_app_server_collab_wait_items_render_history() {
                     other_receiver_thread_id.to_string(),
                 ],
                 prompt: None,
+                agent_type: None,
+                fork_context: None,
                 model: None,
                 reasoning_effort: None,
                 agents_states: HashMap::from([
@@ -679,6 +691,8 @@ async fn live_app_server_collab_spawn_completed_renders_requested_model_and_effo
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: Vec::new(),
                 prompt: Some("Explore the repo".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::new(),
@@ -699,6 +713,8 @@ async fn live_app_server_collab_spawn_completed_renders_requested_model_and_effo
                 sender_thread_id: sender_thread_id.to_string(),
                 receiver_thread_ids: vec![spawned_thread_id.to_string()],
                 prompt: Some("Explore the repo".to_string()),
+                agent_type: None,
+                fork_context: None,
                 model: Some("gpt-5".to_string()),
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
