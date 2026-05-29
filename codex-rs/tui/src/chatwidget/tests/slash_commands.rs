@@ -1059,6 +1059,8 @@ async fn interrupted_merged_message_history_encodes_mentions_once() {
     assert_eq!(next_add_to_history_event(&mut rx), encoded);
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_no_submit_op(&mut op_rx);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     next_interrupt_op(&mut op_rx);
     chat.on_interrupted_turn(TurnAbortReason::Interrupted);
 

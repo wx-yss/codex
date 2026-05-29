@@ -28,6 +28,7 @@ use crate::bottom_pane::bottom_pane_view::BottomPaneView;
 use crate::bottom_pane::scroll_state::ScrollState;
 use crate::bottom_pane::selection_popup_common::GenericDisplayRow;
 use crate::bottom_pane::selection_popup_common::measure_rows_height;
+use crate::esc_interrupt_armer::EscInterruptArmer;
 use crate::history_cell;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -144,6 +145,7 @@ pub(crate) struct RequestUserInputOverlay {
     confirm_unanswered: Option<ScrollState>,
     composer_submit_keys: Vec<KeyBinding>,
     interrupt_turn_keys: Vec<KeyBinding>,
+    esc_interrupt_armer: EscInterruptArmer,
     list_keymap: ListKeymap,
 }
 
@@ -200,6 +202,7 @@ impl RequestUserInputOverlay {
             confirm_unanswered: None,
             composer_submit_keys: keymap.composer.submit.clone(),
             interrupt_turn_keys: keymap.chat.interrupt_turn.clone(),
+            esc_interrupt_armer: EscInterruptArmer::default(),
             list_keymap: keymap.list,
         };
         overlay.reset_for_request();
@@ -1070,6 +1073,19 @@ impl BottomPaneView for RequestUserInputOverlay {
             return;
         }
 
+        if EscInterruptArmer::is_configured_escape_interrupt(&self.interrupt_turn_keys, key_event) {
+            if !EscInterruptArmer::is_interrupt_trigger(key_event)
+                || !self.esc_interrupt_armer.confirm_or_arm()
+            {
+                return;
+            }
+            // TODO: Emit interrupted request_user_input results (including committed answers)
+            // once core supports persisting them reliably without follow-up turn issues.
+            self.app_event_tx.interrupt();
+            self.done = true;
+            return;
+        }
+
         if self.interrupt_turn_keys.is_pressed(key_event) {
             // TODO: Emit interrupted request_user_input results (including committed answers)
             // once core supports persisting them reliably without follow-up turn issues.
@@ -1389,6 +1405,11 @@ mod tests {
         );
     }
 
+    fn press_esc_twice(overlay: &mut RequestUserInputOverlay) {
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    }
+
     fn question_with_options(id: &str, header: &str) -> ToolRequestUserInputQuestion {
         ToolRequestUserInputQuestion {
             id: id.to_string(),
@@ -1608,7 +1629,7 @@ mod tests {
             questions: vec![question_with_options("q3", "Third")],
         });
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        press_esc_twice(&mut overlay);
 
         assert!(overlay.done, "expected overlay to be done");
         expect_interrupt_only(&mut rx);
@@ -2187,7 +2208,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        press_esc_twice(&mut overlay);
 
         assert_eq!(overlay.done, true);
         expect_interrupt_only(&mut rx);
@@ -2204,10 +2225,39 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        press_esc_twice(&mut overlay);
 
         assert_eq!(overlay.done, true);
         expect_interrupt_only(&mut rx);
+    }
+
+    #[test]
+    fn esc_repeat_does_not_confirm_interrupt() {
+        let (tx, mut rx) = test_sender();
+        let mut overlay = RequestUserInputOverlay::new(
+            request_event("turn-1", vec![question_with_options("q1", "Pick one")]),
+            tx,
+            /*has_input_focus*/ true,
+            /*enhanced_keys_supported*/ false,
+            /*disable_paste_burst*/ false,
+        );
+
+        overlay.handle_key_event(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        ));
+        overlay.handle_key_event(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+
+        assert!(!overlay.done);
+        assert!(
+            rx.try_recv().is_err(),
+            "expected Esc repeat to not confirm interrupt"
+        );
     }
 
     #[test]
@@ -2290,7 +2340,7 @@ mod tests {
             "unexpected AppEvent before interruption"
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        press_esc_twice(&mut overlay);
 
         expect_interrupt_only(&mut rx);
     }

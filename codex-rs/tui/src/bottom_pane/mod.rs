@@ -23,6 +23,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::pending_input_preview::PendingInputPreview;
 use crate::bottom_pane::pending_thread_approvals::PendingThreadApprovals;
 use crate::bottom_pane::unified_exec_footer::UnifiedExecFooter;
+use crate::esc_interrupt_armer::EscInterruptArmer;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -218,6 +219,7 @@ pub(crate) struct BottomPane {
     enhanced_keys_supported: bool,
     disable_paste_burst: bool,
     is_task_running: bool,
+    esc_interrupt_armer: EscInterruptArmer,
     esc_backtrack_hint: bool,
     animations_enabled: bool,
 
@@ -283,6 +285,7 @@ impl BottomPane {
             enhanced_keys_supported,
             disable_paste_burst,
             is_task_running: false,
+            esc_interrupt_armer: EscInterruptArmer::default(),
             status: None,
             unified_exec_footer: UnifiedExecFooter::new(),
             pending_input_preview: PendingInputPreview::new(),
@@ -628,17 +631,32 @@ impl BottomPane {
             // If a task is running and a status line is visible, allow the
             // configured action to interrupt even while the composer has focus.
             // When a popup is active, prefer dismissing it over interrupting the task.
-            if self.keymap.chat.interrupt_turn.is_pressed(key_event)
-                && self.is_task_running
+            let interrupt_available = self.is_task_running
                 && !(is_agent_command && key_event.code == KeyCode::Esc)
                 && !self.composer.popup_active()
                 && !self.composer_should_handle_vim_insert_escape(key_event)
-                && let Some(status) = &self.status
-            {
-                // Send Op::Interrupt
-                status.interrupt();
-                self.request_redraw();
-                return InputResult::None;
+                && self.status.is_some();
+            if interrupt_available {
+                if EscInterruptArmer::is_configured_escape_interrupt(
+                    &self.keymap.chat.interrupt_turn,
+                    key_event,
+                ) {
+                    if EscInterruptArmer::is_interrupt_trigger(key_event)
+                        && self.esc_interrupt_armer.confirm_or_arm()
+                        && let Some(status) = &self.status
+                    {
+                        status.interrupt();
+                    }
+                    self.request_redraw();
+                    return InputResult::None;
+                }
+                if self.keymap.chat.interrupt_turn.is_pressed(key_event)
+                    && let Some(status) = &self.status
+                {
+                    status.interrupt();
+                    self.request_redraw();
+                    return InputResult::None;
+                }
             }
             let records_composer_activity =
                 matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat)
@@ -2718,7 +2736,7 @@ mod tests {
     }
 
     #[test]
-    fn esc_interrupts_running_task_when_no_popup() {
+    fn double_esc_interrupts_running_task_when_no_popup() {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = BottomPane::new(BottomPaneParams {
@@ -2737,8 +2755,49 @@ mod tests {
         pane.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
         assert!(
+            rx.try_recv().is_err(),
+            "expected first Esc to only arm interrupt"
+        );
+
+        pane.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(
             matches!(rx.try_recv(), Ok(AppEvent::CodexOp(Op::Interrupt))),
-            "expected Esc to send Op::Interrupt while a task is running"
+            "expected second Esc press to send Op::Interrupt while a task is running"
+        );
+    }
+
+    #[test]
+    fn esc_repeat_does_not_confirm_running_task_interrupt() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+            animations_enabled: true,
+            skills: Some(Vec::new()),
+        });
+
+        pane.set_task_running(/*running*/ true);
+
+        pane.handle_key_event(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        ));
+        pane.handle_key_event(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+
+        assert!(
+            rx.try_recv().is_err(),
+            "expected Esc repeat to not confirm interrupt"
         );
     }
 

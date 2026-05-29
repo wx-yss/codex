@@ -946,11 +946,40 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
 
     chat.handle_key_event(esc);
 
+    assert!(op_rx.try_recv().is_err());
+    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
+
+    chat.handle_key_event(esc);
+
     match op_rx.try_recv() {
         Ok(Op::Interrupt) => {}
         other => panic!("expected Op::Interrupt, got {other:?}"),
     }
     assert!(chat.input_queue.submit_pending_steers_after_interrupt);
+}
+
+#[tokio::test]
+async fn pending_steer_esc_repeat_does_not_confirm_interrupt() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.bottom_pane.set_task_running(/*running*/ true);
+    chat.input_queue
+        .pending_steers
+        .push_back(pending_steer("queued steer"));
+
+    chat.handle_key_event(KeyEvent::new_with_kind(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    ));
+    chat.handle_key_event(KeyEvent::new_with_kind(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+        KeyEventKind::Repeat,
+    ));
+
+    assert!(op_rx.try_recv().is_err());
+    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
 }
 
 #[tokio::test]

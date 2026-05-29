@@ -18,6 +18,11 @@ ESC，才确认中断并发送现有的 interrupt 操作。超过 200ms 后，�
 其他 ESC 行为，例如关闭弹窗、退出 Vim insert mode、编辑上一条消息、在某个视图内做本地取消，都应继续保持为
 本地 UI 行为，不能变成 agent 中断。
 
+## 实现记录
+
+- 2026-05-30：新增独立 ESC 中断确认状态机，并接入运行中状态行、pending steer、request-user-input 三条
+  ESC 中断路径；非 ESC 中断键保持单击中断。
+
 ## 踩坑记录
 
 - 当前分支里运行中状态行和 pending steer 路径曾接受 `KeyEventKind::Press | Repeat`，request-user-input
@@ -25,3 +30,5 @@ ESC，才确认中断并发送现有的 interrupt 操作。超过 200ms 后，�
   `Release` 只能被消费，不能 arm 或 confirm，否则长按 ESC 会被误识别为双击。
 - request-user-input 的 notes 区有本地 ESC 行为：有选项且 notes UI 展开时，第一次 ESC 要先收起 notes，
   不能进入中断确认窗口。
+- 第二次 ESC 确认成功后必须立即 disarm，不能续上新的 200ms 窗口；否则第三次 ESC 紧接着按下会被当作
+  又一次确认，可能重复发送 interrupt。

@@ -112,17 +112,33 @@ impl ChatWidget {
             return;
         }
 
-        if self.chat_keymap.interrupt_turn.is_pressed(key_event)
-            && !self.input_queue.pending_steers.is_empty()
+        let interrupt_pending_steers_available = !self.input_queue.pending_steers.is_empty()
             && self.bottom_pane.is_task_running()
             && self.bottom_pane.no_modal_or_popup_active()
-            && !self.should_handle_vim_insert_escape(key_event)
-        {
-            self.input_queue.submit_pending_steers_after_interrupt = true;
-            if !self.submit_op(AppCommand::interrupt()) {
-                self.input_queue.submit_pending_steers_after_interrupt = false;
+            && !self.should_handle_vim_insert_escape(key_event);
+        if interrupt_pending_steers_available {
+            if EscInterruptArmer::is_configured_escape_interrupt(
+                &self.chat_keymap.interrupt_turn,
+                key_event,
+            ) {
+                if !EscInterruptArmer::is_interrupt_trigger(key_event)
+                    || !self.esc_interrupt_armer.confirm_or_arm()
+                {
+                    return;
+                }
+                self.input_queue.submit_pending_steers_after_interrupt = true;
+                if !self.submit_op(AppCommand::interrupt()) {
+                    self.input_queue.submit_pending_steers_after_interrupt = false;
+                }
+                return;
             }
-            return;
+            if self.chat_keymap.interrupt_turn.is_pressed(key_event) {
+                self.input_queue.submit_pending_steers_after_interrupt = true;
+                if !self.submit_op(AppCommand::interrupt()) {
+                    self.input_queue.submit_pending_steers_after_interrupt = false;
+                }
+                return;
+            }
         }
 
         if matches!(key_event.code, KeyCode::Esc)
