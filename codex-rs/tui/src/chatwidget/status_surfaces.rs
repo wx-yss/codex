@@ -78,6 +78,15 @@ pub(super) struct CachedProjectRootName {
     pub(super) root_name: Option<String>,
 }
 
+/// Cached compact current-directory display keyed by the cwd used for the last lookup.
+///
+/// Unique-prefix shortening inspects sibling directories, so cache the result while cwd is stable.
+#[derive(Clone, Debug)]
+pub(super) struct CachedCurrentDirDisplay {
+    pub(super) cwd: PathBuf,
+    pub(super) display: String,
+}
+
 impl ChatWidget {
     fn status_surface_selections(&self) -> StatusSurfaceSelections {
         let (status_line_items, invalid_status_line_items) = self.status_line_items_with_invalids();
@@ -471,6 +480,22 @@ impl ChatWidget {
         root_name
     }
 
+    fn status_line_current_dir_display(&mut self) -> String {
+        let cwd = self.status_line_cwd().to_path_buf();
+        if let Some(cache) = &self.status_line_current_dir_display_cache
+            && cache.cwd == cwd
+        {
+            return cache.display.clone();
+        }
+
+        let display = format_current_dir_display(&cwd);
+        self.status_line_current_dir_display_cache = Some(CachedCurrentDirDisplay {
+            cwd,
+            display: display.clone(),
+        });
+        display
+    }
+
     /// Produces the terminal-title `project` value.
     ///
     /// This prefers the cached project-root name and falls back to the current
@@ -562,12 +587,7 @@ impl ChatWidget {
         match item {
             StatusLineItem::ModelName => Some(self.model_display_name().to_string()),
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
-            StatusLineItem::CurrentDir => {
-                Some(format_directory_display(
-                    self.status_line_cwd(),
-                    /*max_width*/ None,
-                ))
-            }
+            StatusLineItem::CurrentDir => Some(self.status_line_current_dir_display()),
             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
             StatusLineItem::GitBranch => self.status_line_branch.clone(),
             StatusLineItem::PullRequestNumber => self
@@ -600,7 +620,7 @@ impl ChatWidget {
             }
             StatusLineItem::ContextRemaining => self
                 .status_line_context_remaining_percent()
-                .map(|remaining| format!("Context {remaining}% left")),
+                .map(|remaining| format!("{remaining}%")),
             StatusLineItem::ContextUsed => self
                 .status_line_context_used_percent()
                 .map(|used| format!("Context {used}% used")),
@@ -722,7 +742,8 @@ impl ChatWidget {
                 Self::truncate_terminal_title_part(branch.clone(), /*max_chars*/ 32)
             }),
             TerminalTitleItem::ContextRemaining => self
-                .status_line_value_for_item(StatusLineItem::ContextRemaining)
+                .status_line_context_remaining_percent()
+                .map(|remaining| format!("Context {remaining}% left"))
                 .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
             TerminalTitleItem::ContextUsed => self
                 .status_line_value_for_item(StatusLineItem::ContextUsed)
@@ -1043,4 +1064,129 @@ where
         }
     }
     (items, invalid)
+}
+
+fn format_current_dir_display(directory: &Path) -> String {
+    let display = format_directory_display(directory, /*max_width*/ None);
+    if cfg!(windows) {
+        return display;
+    }
+
+    format_current_dir_display_with_root(display, current_dir_display_root)
+}
+
+fn format_current_dir_display_with_root<F>(display: String, root_for_parts: F) -> String
+where
+    F: Fn(&[String]) -> Option<PathBuf>,
+{
+    let mut parts = display
+        .split(std::path::MAIN_SEPARATOR)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if parts.len() <= 2 {
+        return display;
+    }
+
+    let last_index = parts.len() - 1;
+    let mut parent = root_for_parts(&parts);
+    for part in &mut parts[..last_index] {
+        if part == "~" || part.is_empty() {
+            continue;
+        }
+        let original = part.clone();
+        if let Some(prefix) = parent
+            .as_deref()
+            .and_then(|parent| shortest_unique_dir_prefix(parent, &original))
+        {
+            *part = prefix;
+        }
+        parent = parent.map(|parent| parent.join(original));
+    }
+
+    parts.join(std::path::MAIN_SEPARATOR_STR)
+}
+
+fn current_dir_display_root(parts: &[String]) -> Option<PathBuf> {
+    match parts.first().map(String::as_str) {
+        Some("~") => dirs::home_dir(),
+        Some("") => Some(PathBuf::from(std::path::MAIN_SEPARATOR_STR)),
+        _ => None,
+    }
+}
+
+fn shortest_unique_dir_prefix(parent: &Path, segment: &str) -> Option<String> {
+    let siblings = std::fs::read_dir(parent)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    if !siblings.iter().any(|name| name == segment) {
+        return None;
+    }
+
+    let min_char_count = if segment.starts_with('.') { 2 } else { 1 };
+    for char_count in min_char_count..=segment.chars().count() {
+        let prefix = take_chars(segment, char_count);
+        let matches = siblings
+            .iter()
+            .filter(|name| name.starts_with(prefix.as_str()))
+            .count();
+        if matches == 1 {
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn take_chars(value: &str, count: usize) -> String {
+    value.chars().take(count).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn format_current_dir_shortens_intermediate_segments() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::create_dir(home.path().join("Desktop")).expect("create Desktop");
+        std::fs::create_dir_all(home.path().join("Documents/project/remote/codex"))
+            .expect("create nested cwd");
+        std::fs::create_dir(home.path().join("Downloads")).expect("create Downloads");
+
+        assert_eq!(
+            format_current_dir_display_with_root(
+                "~/Documents/project/remote/codex".to_string(),
+                |_| { Some(home.path().to_path_buf()) },
+            ),
+            "~/Doc/p/r/codex"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn format_current_dir_keeps_segment_when_unique_prefix_is_unavailable() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::create_dir_all(home.path().join("foo/codex")).expect("create foo cwd");
+        std::fs::create_dir(home.path().join("foobar")).expect("create foobar");
+
+        assert_eq!(
+            format_current_dir_display_with_root("~/foo/codex".to_string(), |_| {
+                Some(home.path().to_path_buf())
+            }),
+            "~/foo/codex"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn format_current_dir_preserves_short_paths() {
+        assert_eq!(
+            format_current_dir_display_with_root("~/codex".to_string(), |_| None),
+            "~/codex"
+        );
+    }
 }

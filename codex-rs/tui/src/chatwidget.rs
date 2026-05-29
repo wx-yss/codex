@@ -405,6 +405,7 @@ use self::status_state::TerminalTitleStatusKind;
 mod status_controls;
 mod status_surfaces;
 mod streaming;
+use self::status_surfaces::CachedCurrentDirDisplay;
 use self::status_surfaces::CachedProjectRootName;
 mod tool_lifecycle;
 mod tool_requests;
@@ -688,6 +689,8 @@ pub(crate) struct ChatWidget {
     terminal_title_animation_origin: Instant,
     // Cached project-root display name keyed by cwd for status/title rendering.
     status_line_project_root_name_cache: Option<CachedProjectRootName>,
+    // Cached compact current-dir display keyed by cwd for status-line rendering.
+    status_line_current_dir_display_cache: Option<CachedCurrentDirDisplay>,
     // Cached git branch name for the status line (None if unknown).
     status_line_branch: Option<String>,
     // CWD used to resolve the cached branch; change resets branch state.

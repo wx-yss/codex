@@ -221,10 +221,18 @@ impl StatusSurfacePreviewData {
         I: IntoIterator<Item = StatusLineItem>,
     {
         let segments = items.into_iter().filter_map(|item| {
-            self.value_for(item.preview_item())
-                .map(|value| (item, value.to_string()))
+            self.status_line_value_for_item(item)
+                .map(|value| (item, value))
         });
         status_line_from_segments(segments, use_theme_colors)
+    }
+
+    fn status_line_value_for_item(&self, item: StatusLineItem) -> Option<String> {
+        let value = self.values.get(&item.preview_item())?;
+        if item == StatusLineItem::ContextRemaining && value.is_placeholder {
+            return Some("0%".to_string());
+        }
+        Some(value.text.clone())
     }
 }
 
@@ -272,5 +280,59 @@ fn rate_limit_preview_copy(value: &str) -> Option<RateLimitPreviewCopy> {
         })
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_text(line: Option<Line<'static>>) -> Option<String> {
+        line.map(|line| {
+            line.spans
+                .into_iter()
+                .map(|span| span.content.into_owned())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+    }
+
+    #[test]
+    fn shared_context_remaining_placeholder_stays_labeled() {
+        let preview_data = StatusSurfacePreviewData::default();
+
+        assert_eq!(
+            preview_data.value_for(StatusSurfacePreviewItem::ContextRemaining),
+            Some("Context 0% left")
+        );
+    }
+
+    #[test]
+    fn status_line_context_remaining_placeholder_is_compact() {
+        let preview_data = StatusSurfacePreviewData::default();
+
+        assert_eq!(
+            line_text(preview_data.status_line_for_items(
+                [StatusLineItem::ContextRemaining],
+                /*use_theme_colors*/ false,
+            )),
+            Some("0%".to_string())
+        );
+    }
+
+    #[test]
+    fn status_line_context_remaining_live_value_is_not_overridden() {
+        let preview_data = StatusSurfacePreviewData::from_iter([(
+            StatusSurfacePreviewItem::ContextRemaining,
+            "42%".to_string(),
+        )]);
+
+        assert_eq!(
+            line_text(preview_data.status_line_for_items(
+                [StatusLineItem::ContextRemaining],
+                /*use_theme_colors*/ false,
+            )),
+            Some("42%".to_string())
+        );
     }
 }

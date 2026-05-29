@@ -1994,20 +1994,30 @@ async fn status_line_context_used_renders_labeled_percent() {
 }
 
 #[tokio::test]
-async fn status_line_context_remaining_renders_labeled_percent() {
+async fn status_line_context_remaining_renders_percent_only() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     chat.config.tui_status_line = Some(vec!["context-remaining".to_string()]);
 
     chat.refresh_status_line();
 
-    assert_eq!(
-        status_line_text(&chat),
-        Some("Context 100% left".to_string())
-    );
+    assert_eq!(status_line_text(&chat), Some("100%".to_string()));
     assert!(
         drain_insert_history(&mut rx).is_empty(),
         "context-remaining should remain a valid status line item"
+    );
+}
+
+#[tokio::test]
+async fn terminal_title_context_remaining_keeps_labeled_percent() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_terminal_title = Some(vec!["context-remaining".to_string()]);
+
+    chat.refresh_terminal_title();
+
+    assert_eq!(
+        chat.last_terminal_title,
+        Some("Context 100% left".to_string())
     );
 }
 
