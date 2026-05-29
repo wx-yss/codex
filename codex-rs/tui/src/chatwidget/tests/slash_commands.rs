@@ -35,6 +35,14 @@ fn fast_tier_command() -> ServiceTierCommand {
     }
 }
 
+fn install_user_prompt(chat: &mut ChatWidget, name: &str, contents: &str) {
+    let prompts_dir = chat.config.codex_home.join("prompts");
+    std::fs::create_dir_all(&prompts_dir).expect("create prompts dir");
+    std::fs::write(prompts_dir.join(format!("{name}.md")), contents).expect("write prompt");
+    chat.user_prompts = crate::user_prompts::list_user_prompts(&chat.config.codex_home);
+    chat.bottom_pane.set_user_prompts(chat.user_prompts.clone());
+}
+
 fn complete_turn_with_message(chat: &mut ChatWidget, turn_id: &str, message: Option<&str>) {
     if let Some(message) = message {
         complete_assistant_message(
@@ -193,6 +201,72 @@ async fn queued_slash_review_with_args_dispatches_after_active_turn() {
         ),
         other => panic!("expected queued /review to submit review op, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn user_prompt_submits_prompt_body_with_inline_args() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    install_user_prompt(
+        &mut chat,
+        "opsx-apply",
+        "---\ndescription: Apply change\nargument-hint: ticket\n---\n\nApply this change.",
+    );
+
+    submit_composer_text(&mut chat, "/prompt:opsx-apply extra context");
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "Apply this change.\n\nextra context".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected user prompt body to submit, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn queued_user_prompt_submits_prompt_body_with_multiline_args() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    install_user_prompt(&mut chat, "opsx-apply", "Apply this change.");
+    handle_turn_started(&mut chat, "turn-1");
+
+    queue_composer_text_with_tab(&mut chat, "/prompt:opsx-apply\nmulti\nline args");
+
+    complete_turn_with_message(&mut chat, "turn-1", Some("done"));
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "Apply this change.\n\nmulti\nline args".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected queued user prompt body to submit, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn empty_user_prompt_reports_error_without_submitting() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    install_user_prompt(&mut chat, "empty", "---\ndescription: Empty\n---\n\n");
+
+    submit_composer_text(&mut chat, "/prompt:empty");
+
+    assert_no_submit_op(&mut op_rx);
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Prompt '/prompt:empty' is empty."),
+        "expected empty prompt error, got {rendered:?}"
+    );
 }
 
 #[tokio::test]

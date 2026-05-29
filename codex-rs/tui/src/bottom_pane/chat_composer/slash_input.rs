@@ -16,6 +16,7 @@ use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
 use crate::bottom_pane::slash_commands::has_slash_command_prefix;
 use crate::slash_command::SlashCommand;
+use crate::user_prompts::UserPromptMetadata;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 
@@ -48,6 +49,7 @@ pub(super) struct SlashInput<'a> {
     is_bash_mode: bool,
     command_flags: BuiltinCommandFlags,
     service_tier_commands: &'a [ServiceTierCommand],
+    user_prompts: &'a [UserPromptMetadata],
 }
 
 impl<'a> SlashInput<'a> {
@@ -56,12 +58,14 @@ impl<'a> SlashInput<'a> {
         is_bash_mode: bool,
         command_flags: BuiltinCommandFlags,
         service_tier_commands: &'a [ServiceTierCommand],
+        user_prompts: &'a [UserPromptMetadata],
     ) -> Self {
         Self {
             enabled,
             is_bash_mode,
             command_flags,
             service_tier_commands,
+            user_prompts,
         }
     }
 
@@ -165,7 +169,12 @@ impl<'a> SlashInput<'a> {
             return rest.is_empty();
         }
 
-        has_slash_command_prefix(name, self.command_flags, self.service_tier_commands)
+        has_slash_command_prefix(
+            name,
+            self.command_flags,
+            self.service_tier_commands,
+            self.user_prompts,
+        )
     }
 
     pub(super) fn command_popup(&self, filter_text: &str) -> CommandPopup {
@@ -183,13 +192,19 @@ impl<'a> SlashInput<'a> {
                 side_conversation_active: self.command_flags.side_conversation_active,
             },
             self.service_tier_commands.to_vec(),
+            self.user_prompts.to_vec(),
         );
         command_popup.on_composer_text_change(filter_text.to_string());
         command_popup
     }
 
     fn command(&self, name: &str) -> Option<SlashCommandItem> {
-        find_slash_command(name, self.command_flags, self.service_tier_commands)
+        find_slash_command(
+            name,
+            self.command_flags,
+            self.service_tier_commands,
+            self.user_prompts,
+        )
     }
 }
 
@@ -351,6 +366,17 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
+                    if matches!(sel, CommandItem::UserPrompt(_)) {
+                        let selected_command_text = format!("/{} ", sel.full_command());
+                        self.draft
+                            .textarea
+                            .set_text_clearing_elements(&selected_command_text);
+                        self.draft.textarea.set_cursor(selected_command_text.len());
+                        self.draft.is_bash_mode = false;
+                        self.popups.active = ActivePopup::None;
+                        return (InputResult::None, true);
+                    }
+
                     if self
                         .complete_selected_slash_command_preserving_existing_draft_tail_as_inline_args(
                             &sel,
@@ -369,6 +395,7 @@ impl ChatComposer {
                             CommandItem::ServiceTier(command) => {
                                 InputResult::ServiceTierCommand(command)
                             }
+                            CommandItem::UserPrompt(_) => unreachable!(),
                         },
                         true,
                     );
@@ -494,7 +521,7 @@ pub(super) fn selected_command_completion(
     first_line: &str,
     command: &CommandItem,
 ) -> Option<String> {
-    let selected_command_text = format!("/{}", command.command());
+    let selected_command_text = format!("/{}", command.full_command());
     (!first_line.trim_start().starts_with(&selected_command_text))
         .then(|| format!("{selected_command_text} "))
 }

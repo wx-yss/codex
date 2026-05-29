@@ -206,6 +206,7 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::style::user_message_style;
+use crate::user_prompts::UserPromptMetadata;
 use codex_protocol::ThreadId;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
@@ -294,6 +295,8 @@ pub enum InputResult {
     /// command-history entry still represents the original command invocation that should be
     /// committed only if dispatch accepts it.
     CommandWithArgs(SlashCommand, String, Vec<TextElement>),
+    /// A user prompt command of the form `/prompt:<name>`.
+    UserPrompt(UserPromptMetadata, String, Vec<TextElement>),
     None,
 }
 
@@ -371,6 +374,7 @@ pub(crate) struct ChatComposer {
     plugins_command_enabled: bool,
     service_tier_commands_enabled: bool,
     service_tier_commands: Vec<ServiceTierCommand>,
+    user_prompts: Vec<UserPromptMetadata>,
     mentions_v2_enabled: bool,
     goal_command_enabled: bool,
     personality_command_enabled: bool,
@@ -431,6 +435,7 @@ impl ChatComposer {
             self.draft.is_bash_mode,
             self.builtin_command_flags(),
             &self.service_tier_commands,
+            &self.user_prompts,
         )
     }
 
@@ -539,6 +544,7 @@ impl ChatComposer {
             plugins_command_enabled: false,
             service_tier_commands_enabled: false,
             service_tier_commands: Vec::new(),
+            user_prompts: Vec::new(),
             mentions_v2_enabled: false,
             goal_command_enabled: false,
             personality_command_enabled: false,
@@ -637,6 +643,11 @@ impl ChatComposer {
 
     pub fn set_service_tier_commands(&mut self, commands: Vec<ServiceTierCommand>) {
         self.service_tier_commands = commands;
+        self.sync_popups();
+    }
+
+    pub fn set_user_prompts(&mut self, user_prompts: Vec<UserPromptMetadata>) {
+        self.user_prompts = user_prompts;
         self.sync_popups();
     }
 
@@ -2660,6 +2671,7 @@ impl ChatComposer {
                 | InputResult::Command(_)
                 | InputResult::ServiceTierCommand(_)
                 | InputResult::CommandWithArgs(_, _, _)
+                | InputResult::UserPrompt(_, _, _)
         ) {
             self.draft.textarea.enter_vim_normal_mode();
         }
@@ -2805,6 +2817,9 @@ impl ChatComposer {
         Some(match command {
             SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
             SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
+            SlashCommandItem::UserPrompt(prompt) => {
+                InputResult::UserPrompt(prompt, String::new(), Vec::new())
+            }
         })
     }
 
@@ -2829,14 +2844,19 @@ impl ChatComposer {
         );
         let trimmed_rest = inline_command.rest.trim();
         args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
-        let SlashCommandItem::Builtin(cmd) = command else {
-            return None;
-        };
-        Some(InputResult::CommandWithArgs(
-            cmd,
-            trimmed_rest.to_string(),
-            args_elements,
-        ))
+        match command {
+            SlashCommandItem::Builtin(cmd) => Some(InputResult::CommandWithArgs(
+                cmd,
+                trimmed_rest.to_string(),
+                args_elements,
+            )),
+            SlashCommandItem::UserPrompt(prompt) => Some(InputResult::UserPrompt(
+                prompt,
+                trimmed_rest.to_string(),
+                args_elements,
+            )),
+            SlashCommandItem::ServiceTier(_) => None,
+        }
     }
 
     /// Expand pending placeholders and extract normalized inline-command args.
@@ -2896,7 +2916,7 @@ impl ChatComposer {
         if matches!(command, CommandItem::Builtin(SlashCommand::Clear)) {
             return;
         }
-        self.stage_slash_command_history_text(format!("/{}", command.command()));
+        self.stage_slash_command_history_text(format!("/{}", command.full_command()));
     }
 
     /// Store the provided command text and the current composer adornments in the pending slot.
@@ -7270,6 +7290,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected model command, got service tier {command:?}")
                 }
+                Some(CommandItem::UserPrompt(prompt)) => {
+                    panic!("expected model command, got user prompt {prompt:?}")
+                }
                 None => panic!("no selected command for '/mo'"),
             },
             _ => panic!("slash popup not active after typing '/mo'"),
@@ -7326,6 +7349,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected resume command, got service tier {command:?}")
                 }
+                Some(CommandItem::UserPrompt(prompt)) => {
+                    panic!("expected resume command, got user prompt {prompt:?}")
+                }
                 None => panic!("no selected command for '/res'"),
             },
             _ => panic!("slash popup not active after typing '/res'"),
@@ -7379,6 +7405,9 @@ mod tests {
                 }
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected pets command, got service tier {command:?}")
+                }
+                Some(CommandItem::UserPrompt(prompt)) => {
+                    panic!("expected pets command, got user prompt {prompt:?}")
                 }
                 None => panic!("no selected command for '/pet'"),
             },
@@ -7434,6 +7463,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected btw command, got service tier {command:?}")
                 }
+                Some(CommandItem::UserPrompt(prompt)) => {
+                    panic!("expected btw command, got user prompt {prompt:?}")
+                }
                 None => panic!("no selected command for '/bt'"),
             },
             _ => panic!("slash popup not active after typing '/bt'"),
@@ -7488,6 +7520,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected side command, got service tier {command:?}")
                 }
+                Some(CommandItem::UserPrompt(prompt)) => {
+                    panic!("expected side command, got user prompt {prompt:?}")
+                }
                 None => panic!("no selected command for '/si'"),
             },
             _ => panic!("slash popup not active after typing '/si'"),
@@ -7524,6 +7559,74 @@ mod tests {
                 description: "Fastest inference with increased plan usage".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn slash_popup_enter_inserts_user_prompt_command_without_submitting() {
+        use super::super::command_popup::CommandItem;
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_user_prompts(vec![UserPromptMetadata {
+            name: "opsx-apply".to_string(),
+            description: Some("Apply an OpenSpec change".to_string()),
+            body: std::sync::Arc::from("Apply change."),
+        }]);
+        type_chars_humanlike(&mut composer, &['/', 'p', 'r', 'o', 'm', 'p', 't', ':']);
+
+        match &composer.popups.active {
+            ActivePopup::Command(popup) => match popup.selected_item() {
+                Some(CommandItem::UserPrompt(prompt)) => assert_eq!(prompt.name, "opsx-apply"),
+                other => panic!("expected user prompt candidate, got {other:?}"),
+            },
+            _ => panic!("slash popup not active after typing '/prompt:'"),
+        }
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(result, InputResult::None);
+        assert_eq!(composer.draft.textarea.text(), "/prompt:opsx-apply ");
+    }
+
+    #[test]
+    fn user_prompt_with_inline_args_dispatches_as_prompt_result() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_user_prompts(vec![UserPromptMetadata {
+            name: "opsx-apply".to_string(),
+            description: Some("Apply an OpenSpec change".to_string()),
+            body: std::sync::Arc::from("Apply change."),
+        }]);
+        composer
+            .draft
+            .textarea
+            .set_text_clearing_elements("/prompt:opsx-apply extra context");
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        match result {
+            InputResult::UserPrompt(prompt, args, text_elements) => {
+                assert_eq!(prompt.name, "opsx-apply");
+                assert_eq!(args, "extra context");
+                assert!(text_elements.is_empty());
+            }
+            other => panic!("expected user prompt result, got {other:?}"),
+        }
     }
 
     fn flush_after_paste_burst(composer: &mut ChatComposer) -> bool {
@@ -7585,6 +7688,9 @@ mod tests {
             }
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected init command, got service tier {command:?}")
+            }
+            InputResult::UserPrompt(prompt, _, _) => {
+                panic!("expected init command, got user prompt {prompt:?}")
             }
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
@@ -8090,6 +8196,9 @@ mod tests {
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected diff command, got service tier {command:?}")
             }
+            InputResult::UserPrompt(prompt, _, _) => {
+                panic!("expected diff command, got user prompt {prompt:?}")
+            }
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch after Tab completion, got literal submit: {text}")
             }
@@ -8286,6 +8395,9 @@ mod tests {
             }
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected mention command, got service tier {command:?}")
+            }
+            InputResult::UserPrompt(prompt, _, _) => {
+                panic!("expected mention command, got user prompt {prompt:?}")
             }
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")

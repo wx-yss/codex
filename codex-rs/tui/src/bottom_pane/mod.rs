@@ -103,6 +103,7 @@ pub(crate) mod prompt_args;
 mod skill_popup;
 mod skills_toggle_view;
 pub(crate) mod slash_commands;
+use crate::user_prompts::UserPromptMetadata;
 pub(crate) use footer::CollaborationModeIndicator;
 pub(crate) use footer::GoalStatusIndicator;
 #[cfg(test)]
@@ -419,6 +420,11 @@ impl BottomPane {
 
     pub fn set_service_tier_commands(&mut self, commands: Vec<ServiceTierCommand>) {
         self.composer.set_service_tier_commands(commands);
+        self.request_redraw();
+    }
+
+    pub fn set_user_prompts(&mut self, user_prompts: Vec<UserPromptMetadata>) {
+        self.composer.set_user_prompts(user_prompts);
         self.request_redraw();
     }
 

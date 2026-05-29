@@ -6,6 +6,7 @@
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
 use super::goal_validation::GoalObjectiveValidationSource;
+use super::user_messages::append_text_with_rebased_elements;
 use super::*;
 use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
@@ -13,6 +14,8 @@ use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
+use crate::user_prompts::UserPromptMetadata;
+use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -77,6 +80,37 @@ impl ChatWidget {
         text_elements: Vec<TextElement>,
     ) {
         self.dispatch_command_with_args(cmd, args, text_elements);
+        self.bottom_pane.record_pending_slash_command_history();
+    }
+
+    pub(super) fn handle_user_prompt_dispatch(
+        &mut self,
+        prompt: UserPromptMetadata,
+        args: String,
+        text_elements: Vec<TextElement>,
+    ) {
+        let (args, text_elements) = if args.trim().is_empty() {
+            (String::new(), Vec::new())
+        } else {
+            let Some((args, text_elements)) = self.prepare_live_inline_args(args, text_elements)
+            else {
+                return;
+            };
+            (args, text_elements)
+        };
+        let Some(user_message) = self.user_prompt_message(
+            &prompt,
+            args,
+            text_elements,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            SlashCommandDispatchSource::Live,
+        ) else {
+            return;
+        };
+        self.submit_or_queue_user_prompt(user_message);
+        self.bottom_pane.drain_pending_submission_state();
         self.bottom_pane.record_pending_slash_command_history();
     }
 
@@ -571,6 +605,64 @@ impl ChatWidget {
         }
     }
 
+    fn user_prompt_message(
+        &mut self,
+        prompt: &UserPromptMetadata,
+        args: String,
+        text_elements: Vec<TextElement>,
+        local_images: Vec<LocalImageAttachment>,
+        remote_image_urls: Vec<String>,
+        mention_bindings: Vec<MentionBinding>,
+        source: SlashCommandDispatchSource,
+    ) -> Option<UserMessage> {
+        if prompt.body.is_empty() {
+            self.add_error_message(format!("Prompt '/prompt:{}' is empty.", prompt.name));
+            return None;
+        }
+        let mut user_message = self.prepared_inline_user_message(
+            args,
+            text_elements,
+            local_images,
+            remote_image_urls,
+            mention_bindings,
+            source,
+        );
+        if user_message.text.trim().is_empty() {
+            user_message.text = prompt.body.to_string();
+            user_message.text_elements.clear();
+        } else {
+            let args = std::mem::take(&mut user_message.text);
+            let args_elements = std::mem::take(&mut user_message.text_elements);
+            user_message.text = prompt.body.to_string();
+            user_message.text.push_str("\n\n");
+            append_text_with_rebased_elements(
+                &mut user_message.text,
+                &mut user_message.text_elements,
+                &args,
+                args_elements,
+            );
+        }
+        let actual_chars = user_message.text.chars().count();
+        if actual_chars > MAX_USER_INPUT_TEXT_CHARS {
+            self.add_error_message(format!(
+                "Message exceeds the maximum length of {MAX_USER_INPUT_TEXT_CHARS} characters ({actual_chars} provided)."
+            ));
+            return None;
+        }
+        Some(user_message)
+    }
+
+    fn submit_or_queue_user_prompt(&mut self, user_message: UserMessage) {
+        if self.is_session_configured() && !self.is_plan_streaming_in_tui() {
+            self.reasoning_buffer.clear();
+            self.full_reasoning_buffer.clear();
+            self.set_status_header(String::from("Working"));
+            self.submit_user_message(user_message);
+        } else {
+            self.queue_user_message(user_message);
+        }
+    }
+
     fn dispatch_prepared_command_with_args(
         &mut self,
         cmd: SlashCommand,
@@ -830,9 +922,12 @@ impl ChatWidget {
         }
 
         let service_tier_commands = self.current_model_service_tier_commands();
-        let Some(command) =
-            find_slash_command(name, self.builtin_command_flags(), &service_tier_commands)
-        else {
+        let Some(command) = find_slash_command(
+            name,
+            self.builtin_command_flags(),
+            &service_tier_commands,
+            &self.user_prompts,
+        ) else {
             self.add_info_message(
                 format!(
                     r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
@@ -852,6 +947,21 @@ impl ChatWidget {
                     self.handle_service_tier_command_dispatch(command);
                     QueueDrain::Continue
                 }
+                SlashCommandItem::UserPrompt(prompt) => {
+                    let Some(user_message) = self.user_prompt_message(
+                        &prompt,
+                        String::new(),
+                        Vec::new(),
+                        local_images,
+                        remote_image_urls,
+                        mention_bindings,
+                        SlashCommandDispatchSource::Queued,
+                    ) else {
+                        return QueueDrain::Continue;
+                    };
+                    self.submit_user_message(user_message);
+                    QueueDrain::Stop
+                }
             };
         }
 
@@ -865,15 +975,41 @@ impl ChatWidget {
             });
             return QueueDrain::Stop;
         }
-        let SlashCommandItem::Builtin(cmd) = command else {
-            self.submit_user_message(UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings,
-            });
-            return QueueDrain::Stop;
+        let cmd = match command {
+            SlashCommandItem::Builtin(cmd) => cmd,
+            SlashCommandItem::UserPrompt(prompt) => {
+                let trimmed_start = rest.trim_start();
+                let leading_trimmed = rest.len().saturating_sub(trimmed_start.len());
+                let trimmed_rest = trimmed_start.trim_end();
+                let args_elements = Self::slash_command_args_elements(
+                    trimmed_rest,
+                    rest_offset + leading_trimmed,
+                    &text_elements,
+                );
+                let Some(user_message) = self.user_prompt_message(
+                    &prompt,
+                    trimmed_rest.to_string(),
+                    args_elements,
+                    local_images,
+                    remote_image_urls,
+                    mention_bindings,
+                    SlashCommandDispatchSource::Queued,
+                ) else {
+                    return QueueDrain::Continue;
+                };
+                self.submit_user_message(user_message);
+                return QueueDrain::Stop;
+            }
+            SlashCommandItem::ServiceTier(_) => {
+                self.submit_user_message(UserMessage {
+                    text,
+                    local_images,
+                    remote_image_urls,
+                    text_elements,
+                    mention_bindings,
+                });
+                return QueueDrain::Stop;
+            }
         };
 
         let trimmed_start = rest.trim_start();

@@ -192,7 +192,7 @@ pub(crate) fn create_initial_user_message(
     }
 }
 
-fn append_text_with_rebased_elements(
+pub(super) fn append_text_with_rebased_elements(
     target_text: &mut String,
     target_text_elements: &mut Vec<TextElement>,
     text: &str,

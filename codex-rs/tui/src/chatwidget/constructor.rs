@@ -71,6 +71,7 @@ impl ChatWidget {
         );
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
+        let user_prompts = crate::user_prompts::list_user_prompts(config.codex_home.as_path());
         let default_keymap = RuntimeKeymap::defaults();
         let copy_last_response_binding = runtime_keymap
             .as_ref()
@@ -139,6 +140,7 @@ impl ChatWidget {
             collab_agent_metadata: HashMap::new(),
             pending_collab_spawn_requests: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
+            user_prompts: user_prompts.clone(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
             turn_lifecycle: TurnLifecycleState::new(prevent_idle_sleep),
@@ -226,6 +228,7 @@ impl ChatWidget {
             last_non_retry_error: None,
         };
 
+        widget.bottom_pane.set_user_prompts(user_prompts);
         widget.prefetch_rate_limits();
         if let Some(keymap) = runtime_keymap {
             widget.bottom_pane.set_keymap_bindings(&keymap);
