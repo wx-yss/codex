@@ -12,6 +12,8 @@ use codex_app_server_protocol::CollabAgentStatus;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadStatus;
+use codex_app_server_protocol::TurnStatus;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crossterm::event::KeyCode;
@@ -35,8 +37,15 @@ pub(crate) struct AgentPickerThreadEntry {
     pub(crate) agent_nickname: Option<String>,
     /// Agent type shown in brackets when present, for example `worker`.
     pub(crate) agent_role: Option<String>,
-    /// Whether the thread has emitted a close event and should render dimmed.
-    pub(crate) is_closed: bool,
+    /// Current lifecycle state shown in the `/agent` picker.
+    pub(crate) status: AgentPickerStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentPickerStatus {
+    Running,
+    Completed,
+    Closed,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -62,13 +71,42 @@ pub(crate) struct SpawnRequestSummary {
     pub(crate) fork_context: Option<bool>,
 }
 
-pub(crate) fn agent_picker_status_dot_spans(is_closed: bool) -> Vec<Span<'static>> {
-    let dot = if is_closed {
-        "•".into()
+pub(crate) fn agent_picker_status_from_thread_status(status: &ThreadStatus) -> AgentPickerStatus {
+    match status {
+        ThreadStatus::Active { .. } => AgentPickerStatus::Running,
+        ThreadStatus::Idle | ThreadStatus::SystemError => AgentPickerStatus::Completed,
+        ThreadStatus::NotLoaded => AgentPickerStatus::Closed,
+    }
+}
+
+pub(crate) fn agent_picker_status_from_turns(
+    turns: &[codex_app_server_protocol::Turn],
+) -> AgentPickerStatus {
+    if turns
+        .iter()
+        .any(|turn| matches!(turn.status, TurnStatus::InProgress))
+    {
+        AgentPickerStatus::Running
     } else {
-        "•".green()
+        AgentPickerStatus::Completed
+    }
+}
+
+pub(crate) fn agent_picker_status_dot_spans(status: AgentPickerStatus) -> Vec<Span<'static>> {
+    let dot = match status {
+        AgentPickerStatus::Running => "•".green(),
+        AgentPickerStatus::Completed => "•".blue(),
+        AgentPickerStatus::Closed => "•".dim(),
     };
     vec![dot, " ".into()]
+}
+
+pub(crate) fn agent_picker_status_description(status: AgentPickerStatus) -> &'static str {
+    match status {
+        AgentPickerStatus::Running => "running",
+        AgentPickerStatus::Completed => "completed",
+        AgentPickerStatus::Closed => "closed",
+    }
 }
 
 pub(crate) fn format_agent_picker_item_name(
@@ -663,6 +701,30 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn agent_picker_status_dots_are_distinct() {
+        let running = agent_picker_status_dot_spans(AgentPickerStatus::Running);
+        let completed = agent_picker_status_dot_spans(AgentPickerStatus::Completed);
+        let closed = agent_picker_status_dot_spans(AgentPickerStatus::Closed);
+
+        assert_eq!(running[0].style.fg, Some(Color::Green));
+        assert_eq!(completed[0].style.fg, Some(Color::Blue));
+        assert!(closed[0].style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn agent_picker_status_from_turns_prefers_any_in_progress_turn() {
+        let turns = vec![
+            test_turn("turn-1", TurnStatus::InProgress),
+            test_turn("turn-2", TurnStatus::Completed),
+        ];
+
+        assert_eq!(
+            agent_picker_status_from_turns(&turns),
+            AgentPickerStatus::Running
+        );
+    }
+
+    #[test]
     fn collab_events_snapshot() {
         let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
             .expect("valid sender thread id");
@@ -1062,5 +1124,18 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    fn test_turn(id: &str, status: TurnStatus) -> codex_app_server_protocol::Turn {
+        codex_app_server_protocol::Turn {
+            id: id.to_string(),
+            items: Vec::new(),
+            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            status,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }
     }
 }

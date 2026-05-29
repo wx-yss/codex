@@ -46,13 +46,20 @@ impl App {
     }
 
     fn mcp_inventory_request_thread_id(&self, thread_id: Option<ThreadId>) -> Option<ThreadId> {
-        thread_id.filter(|thread_id| {
-            self.active_thread_id == Some(*thread_id)
-                && self
-                    .agent_navigation
-                    .get(thread_id)
-                    .is_none_or(|entry| !entry.is_closed)
-        })
+        thread_id.filter(|thread_id| self.is_live_agent_request_thread(*thread_id))
+    }
+
+    fn current_live_agent_request_thread_id(&self) -> Option<ThreadId> {
+        self.current_displayed_thread_id()
+            .filter(|thread_id| self.is_live_agent_request_thread(*thread_id))
+    }
+
+    fn is_live_agent_request_thread(&self, thread_id: ThreadId) -> bool {
+        self.active_thread_id == Some(thread_id)
+            && self
+                .agent_navigation
+                .get(&thread_id)
+                .is_none_or(|entry| entry.status != AgentPickerStatus::Closed)
     }
 
     /// Spawns a background task to fetch account rate limits and deliver the
@@ -119,7 +126,7 @@ impl App {
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         let thread_id = self
-            .current_displayed_thread_id()
+            .current_live_agent_request_thread_id()
             .map(|thread_id| thread_id.to_string());
         tokio::spawn(async move {
             let result = fetch_connectors_list(request_handle, force_refetch, thread_id)
@@ -1112,18 +1119,22 @@ mod tests {
         let thread_id = ThreadId::new();
         app.active_thread_id = Some(thread_id);
         app.agent_navigation.upsert(
-            thread_id, /*agent_nickname*/ None, /*agent_role*/ None,
-            /*is_closed*/ false,
+            thread_id,
+            /*agent_nickname*/ None,
+            /*agent_role*/ None,
+            AgentPickerStatus::Completed,
         );
 
         assert_eq!(
             app.mcp_inventory_request_thread_id(Some(thread_id)),
             Some(thread_id)
         );
+        assert_eq!(app.current_live_agent_request_thread_id(), Some(thread_id));
 
         app.agent_navigation.mark_closed(thread_id);
 
         assert_eq!(app.mcp_inventory_request_thread_id(Some(thread_id)), None);
+        assert_eq!(app.current_live_agent_request_thread_id(), None);
     }
 
     #[test]

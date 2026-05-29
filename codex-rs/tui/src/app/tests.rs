@@ -21,6 +21,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_session_info;
+use crate::multi_agents::AgentPickerStatus;
 use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
 
@@ -1164,7 +1165,7 @@ async fn collab_receiver_notification_caches_thread_without_app_server_read() {
         Some(&AgentPickerThreadEntry {
             agent_nickname: None,
             agent_role: None,
-            is_closed: false,
+            status: AgentPickerStatus::Completed,
         })
     );
 }
@@ -1225,7 +1226,7 @@ async fn open_agent_picker_keeps_missing_threads_for_replay() -> Result<()> {
         Some(&AgentPickerThreadEntry {
             agent_nickname: None,
             agent_role: None,
-            is_closed: true,
+            status: AgentPickerStatus::Closed,
         })
     );
     assert_eq!(app.agent_navigation.ordered_thread_ids(), vec![thread_id]);
@@ -1247,7 +1248,7 @@ async fn open_agent_picker_preserves_cached_metadata_for_replay_threads() -> Res
         thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ true,
+        AgentPickerStatus::Closed,
     );
 
     Box::pin(app.open_agent_picker(&mut app_server)).await;
@@ -1258,7 +1259,7 @@ async fn open_agent_picker_preserves_cached_metadata_for_replay_threads() -> Res
         Some(&AgentPickerThreadEntry {
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
-            is_closed: true,
+            status: AgentPickerStatus::Closed,
         })
     );
     Ok(())
@@ -1277,7 +1278,7 @@ async fn open_agent_picker_prunes_terminal_metadata_only_threads() -> Result<()>
         thread_id,
         Some("Ghost".to_string()),
         Some("worker".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     Box::pin(app.open_agent_picker(&mut app_server)).await;
@@ -1302,7 +1303,7 @@ async fn open_agent_picker_marks_terminal_read_errors_closed() -> Result<()> {
         thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     Box::pin(app.open_agent_picker(&mut app_server)).await;
@@ -1312,7 +1313,7 @@ async fn open_agent_picker_marks_terminal_read_errors_closed() -> Result<()> {
         Some(&AgentPickerThreadEntry {
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
-            is_closed: true,
+            status: AgentPickerStatus::Closed,
         })
     );
     Ok(())
@@ -1350,7 +1351,7 @@ fn open_agent_picker_marks_loaded_threads_open() -> Result<()> {
             Some(&AgentPickerThreadEntry {
                 agent_nickname: None,
                 agent_role: None,
-                is_closed: false,
+                status: AgentPickerStatus::Completed,
             })
         );
         Ok(())
@@ -1383,7 +1384,7 @@ fn attach_live_thread_for_selection_rejects_empty_non_ephemeral_fallback_threads
             thread_id,
             Some("Scout".to_string()),
             Some("worker".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
 
         let err = app
@@ -1423,7 +1424,7 @@ fn attach_live_thread_for_selection_rejects_unmaterialized_fallback_threads() ->
             thread_id,
             Some("Scout".to_string()),
             Some("worker".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
 
         let err = app
@@ -1448,7 +1449,7 @@ async fn should_attach_live_thread_for_selection_skips_closed_metadata_only_thre
         thread_id,
         Some("Ghost".to_string()),
         Some("worker".to_string()),
-        /*is_closed*/ true,
+        AgentPickerStatus::Closed,
     );
 
     assert!(!app.should_attach_live_thread_for_selection(thread_id));
@@ -1457,7 +1458,7 @@ async fn should_attach_live_thread_for_selection_skips_closed_metadata_only_thre
         thread_id,
         Some("Ghost".to_string()),
         Some("worker".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
     assert!(app.should_attach_live_thread_for_selection(thread_id));
 
@@ -1479,7 +1480,7 @@ async fn refresh_agent_picker_thread_liveness_prunes_closed_metadata_only_thread
         thread_id,
         Some("Ghost".to_string()),
         Some("worker".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     let is_available =
@@ -2112,7 +2113,7 @@ async fn refresh_pending_thread_approvals_only_lists_inactive_threads() {
         agent_thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     app.refresh_pending_thread_approvals().await;
@@ -2155,7 +2156,7 @@ async fn inactive_thread_approval_bubbles_into_active_view() -> Result<()> {
         agent_thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     app.enqueue_thread_request(
@@ -2314,7 +2315,7 @@ async fn side_defers_subagent_approval_overlay_until_side_exits() -> Result<()> 
         agent_thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     app.enqueue_thread_request(
@@ -2688,7 +2689,7 @@ async fn inactive_thread_approval_badge_clears_after_turn_completion_notificatio
         agent_thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     app.enqueue_thread_request(
@@ -2816,7 +2817,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
         Some(&AgentPickerThreadEntry {
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
-            is_closed: false,
+            status: AgentPickerStatus::Completed,
         })
     );
 
@@ -3424,7 +3425,7 @@ async fn discard_side_thread_removes_agent_navigation_entry() -> Result<()> {
             side_thread_id,
             Some("Side".to_string()),
             Some("side".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
 
         assert!(
@@ -3454,7 +3455,7 @@ async fn discard_side_thread_keeps_local_state_when_server_close_fails() -> Resu
             side_thread_id,
             Some("Side".to_string()),
             Some("side".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
 
         assert!(
@@ -3489,7 +3490,7 @@ async fn discard_closed_side_thread_removes_local_state_without_server_rpc() {
         side_thread_id,
         Some("Side".to_string()),
         Some("side".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     app.discard_closed_side_thread(side_thread_id).await;
@@ -4765,7 +4766,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         receiver_thread_id,
         Some("Robie".to_string()),
         Some("explorer".to_string()),
-        /*is_closed*/ false,
+        AgentPickerStatus::Completed,
     );
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {

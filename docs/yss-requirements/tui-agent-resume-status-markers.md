@@ -30,8 +30,11 @@
 - `/agent` 状态点继续保留；可见描述显示生命周期状态，当前行仍由通用选择器显示 `(current)`。
 - 会话内 `/resume` 传入打开列表前正在查看的 thread id；启动阶段 resume picker 不传入当前 thread id。
 - `/resume` 的 `current` 作为列表状态位渲染，comfortable 放入元信息行，dense 使用固定状态列。
+- 本轮实现中，`/agent` 的搜索值继续包含 thread id，但可见 description 改为生命周期状态。
+- 本轮实现中，已有会话打开 `/resume` 时优先用 `ChatWidget` 当前 thread id 判断 `current`，只在缺失时回退内部 active thread id。
 
 ## 踩坑记录
 
 - `/resume` 的 `current` 判定不能直接复用 `current_displayed_thread_id()`；该函数优先取 `active_thread_id`，当内部 active 状态和用户正在查看的 ChatWidget 短暂不一致时，会把错误 thread id 传给 picker，导致列表中没有任何 row 命中 `current`。
 - 会话内 `/resume` 必须优先使用 `chat_widget.thread_id()` 作为用户当前正在查看的 thread id，必要时再回退到 `active_thread_id`。
+- `/agent` 的 description 不能继续放 thread id，否则会挤掉生命周期状态；thread id 应保留在 search value 里，满足搜索命中但不占可见描述位。

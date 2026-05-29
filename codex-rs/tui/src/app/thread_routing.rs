@@ -160,6 +160,10 @@ impl App {
         self.active_thread_id.or(self.chat_widget.thread_id())
     }
 
+    pub(super) fn current_resume_picker_thread_id(&self) -> Option<ThreadId> {
+        self.chat_widget.thread_id().or(self.active_thread_id)
+    }
+
     pub(super) fn ignore_same_thread_resume(
         &mut self,
         target_session: &crate::resume_picker::SessionTarget,
@@ -917,8 +921,10 @@ impl App {
             }
 
             self.upsert_agent_picker_thread(
-                thread_id, /*agent_nickname*/ None, /*agent_role*/ None,
-                /*is_closed*/ false,
+                thread_id,
+                /*agent_nickname*/ None,
+                /*agent_role*/ None,
+                AgentPickerStatus::Completed,
             );
         }
     }
@@ -951,7 +957,7 @@ impl App {
             thread_id,
             notification.thread.agent_nickname.clone(),
             notification.thread.agent_role.clone(),
-            /*is_closed*/ false,
+            agent_picker_status_from_thread_status(&notification.thread.status),
         );
         Some(session)
     }
@@ -1058,8 +1064,10 @@ impl App {
         self.primary_thread_id = Some(thread_id);
         self.primary_session_configured = Some(session.clone());
         self.upsert_agent_picker_thread(
-            thread_id, /*agent_nickname*/ None, /*agent_role*/ None,
-            /*is_closed*/ false,
+            thread_id,
+            /*agent_nickname*/ None,
+            /*agent_role*/ None,
+            agent_picker_status_from_turns(&turns),
         );
         let channel = self.ensure_thread_channel(thread_id);
         {

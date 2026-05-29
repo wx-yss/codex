@@ -18,6 +18,7 @@
 //! order. Once a thread id is observed it keeps its place in the cycle even if the entry is later
 //! updated or marked closed.
 
+use crate::multi_agents::AgentPickerStatus;
 use crate::multi_agents::AgentPickerThreadEntry;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut;
@@ -74,14 +75,14 @@ impl AgentNavigationState {
     /// Inserts or updates a picker entry while preserving first-seen traversal order.
     ///
     /// The key invariant of this module is enforced here: a thread id is appended to `order` only
-    /// the first time it is seen. Later updates may change nickname, role, or closed state, but
+    /// the first time it is seen. Later updates may change nickname, role, or status, but
     /// they must not move the thread in the cycle or keyboard navigation would feel unstable.
     pub(crate) fn upsert(
         &mut self,
         thread_id: ThreadId,
         agent_nickname: Option<String>,
         agent_role: Option<String>,
-        is_closed: bool,
+        status: AgentPickerStatus,
     ) {
         if !self.threads.contains_key(&thread_id) {
             self.order.push(thread_id);
@@ -91,7 +92,7 @@ impl AgentNavigationState {
             AgentPickerThreadEntry {
                 agent_nickname,
                 agent_role,
-                is_closed,
+                status,
             },
         );
     }
@@ -104,11 +105,13 @@ impl AgentNavigationState {
     /// mid-session.
     pub(crate) fn mark_closed(&mut self, thread_id: ThreadId) {
         if let Some(entry) = self.threads.get_mut(&thread_id) {
-            entry.is_closed = true;
+            entry.status = AgentPickerStatus::Closed;
         } else {
             self.upsert(
-                thread_id, /*agent_nickname*/ None, /*agent_role*/ None,
-                /*is_closed*/ true,
+                thread_id,
+                /*agent_nickname*/ None,
+                /*agent_role*/ None,
+                AgentPickerStatus::Closed,
             );
         }
     }
@@ -275,19 +278,19 @@ mod tests {
             main_thread_id,
             /*agent_nickname*/ None,
             /*agent_role*/ None,
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
         state.upsert(
             first_agent_id,
             Some("Robie".to_string()),
             Some("explorer".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
         state.upsert(
             second_agent_id,
             Some("Bob".to_string()),
             Some("worker".to_string()),
-            /*is_closed*/ false,
+            AgentPickerStatus::Completed,
         );
 
         (state, main_thread_id, first_agent_id, second_agent_id)
@@ -301,7 +304,7 @@ mod tests {
             first_agent_id,
             Some("Robie".to_string()),
             Some("worker".to_string()),
-            /*is_closed*/ true,
+            AgentPickerStatus::Closed,
         );
 
         assert_eq!(

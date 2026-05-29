@@ -71,6 +71,7 @@ const SESSION_META_DATE_WIDTH: usize = 12;
 const SESSION_META_FIELD_GAP_WIDTH: usize = 2;
 const SESSION_META_MIN_CWD_WIDTH: usize = 30;
 const SESSION_META_MAX_CWD_WIDTH: usize = 72;
+const SESSION_STATUS_WIDTH: usize = 9;
 const SESSION_META_BRANCH_ICON: &str = "";
 const SESSION_META_CWD_ICON: &str = "⌁";
 const FOOTER_COMPACT_BREAKPOINT: u16 = 120;
@@ -279,6 +280,7 @@ struct SessionPickerRunOptions {
     local_filter_cwd: Option<PathBuf>,
     action: SessionPickerAction,
     launch_context: SessionPickerLaunchContext,
+    current_thread_id: Option<ThreadId>,
     provider_filter: ProviderFilter,
     initial_density: SessionListDensity,
     view_persistence: Option<SessionPickerViewPersistence>,
@@ -316,6 +318,7 @@ pub async fn run_resume_picker_with_app_server(
         include_non_interactive,
         app_server,
         SessionPickerLaunchContext::Startup,
+        /*current_thread_id*/ None,
     )
     .await
 }
@@ -325,6 +328,7 @@ pub async fn run_resume_picker_from_existing_session_with_app_server(
     config: &Config,
     show_all: bool,
     include_non_interactive: bool,
+    current_thread_id: Option<ThreadId>,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
     run_resume_picker_with_launch_context(
@@ -334,6 +338,7 @@ pub async fn run_resume_picker_from_existing_session_with_app_server(
         include_non_interactive,
         app_server,
         SessionPickerLaunchContext::ExistingSession,
+        current_thread_id,
     )
     .await
 }
@@ -345,6 +350,7 @@ async fn run_resume_picker_with_launch_context(
     include_non_interactive: bool,
     app_server: AppServerSession,
     launch_context: SessionPickerLaunchContext,
+    current_thread_id: Option<ThreadId>,
 ) -> Result<SessionSelection> {
     let (bg_tx, bg_rx) = mpsc::unbounded_channel();
     let uses_remote_workspace = app_server.uses_remote_workspace();
@@ -363,6 +369,7 @@ async fn run_resume_picker_with_launch_context(
         local_filter_cwd,
         action: SessionPickerAction::Resume,
         launch_context,
+        current_thread_id,
         provider_filter,
         initial_density: SessionListDensity::from(config.tui_session_picker_view),
         view_persistence: Some(SessionPickerViewPersistence {
@@ -408,6 +415,7 @@ pub async fn run_fork_picker_with_app_server(
         local_filter_cwd,
         action: SessionPickerAction::Fork,
         launch_context: SessionPickerLaunchContext::Startup,
+        current_thread_id: None,
         provider_filter,
         initial_density: SessionListDensity::from(config.tui_session_picker_view),
         view_persistence: Some(SessionPickerViewPersistence {
@@ -451,6 +459,7 @@ async fn run_session_picker_with_loader(
     state.pager_keymap = options.pager_keymap;
     state.list_keymap = options.list_keymap;
     state.launch_context = options.launch_context;
+    state.current_thread_id = options.current_thread_id;
     state.start_initial_load();
     state.request_frame();
 
@@ -661,6 +670,7 @@ struct PickerState {
     toolbar_focus: ToolbarControl,
     density: SessionListDensity,
     launch_context: SessionPickerLaunchContext,
+    current_thread_id: Option<ThreadId>,
     view_persistence: Option<SessionPickerViewPersistence>,
     action: SessionPickerAction,
     sort_key: ThreadSortKey,
@@ -934,6 +944,7 @@ impl PickerState {
             toolbar_focus: ToolbarControl::Filter,
             density: SessionListDensity::Comfortable,
             launch_context: SessionPickerLaunchContext::Startup,
+            current_thread_id: None,
             view_persistence: None,
             action,
             sort_key: ThreadSortKey::UpdatedAt,
@@ -2571,6 +2582,7 @@ fn render_comfortable_session_lines(
         cwd.as_deref(),
         state.filter_mode == SessionFilterMode::All,
         width,
+        current_row_status(row, state),
     );
     if let Some(style) = row_style {
         lines.extend(apply_session_row_background(footer_lines, style, width));
@@ -2621,6 +2633,8 @@ fn render_dense_session_lines(
     };
     let mut lines = vec![dense_summary_line(DenseSummaryInput {
         marker,
+        status: current_row_status(row, state),
+        show_status_column: state.launch_context == SessionPickerLaunchContext::ExistingSession,
         date: &date,
         title: row.display_preview(),
         is_selected,
@@ -2635,6 +2649,8 @@ fn render_dense_session_lines(
 
 struct DenseSummaryInput<'a> {
     marker: Span<'static>,
+    status: Option<&'a str>,
+    show_status_column: bool,
     date: &'a str,
     title: &'a str,
     is_selected: bool,
@@ -2645,7 +2661,11 @@ struct DenseSummaryInput<'a> {
 fn dense_summary_line(input: DenseSummaryInput<'_>) -> Line<'static> {
     let marker_width = input.marker.width();
     let available = (input.width as usize).saturating_sub(marker_width);
-    let columns = dense_columns(available);
+    let columns = dense_columns(available, input.show_status_column);
+    let status = input
+        .status
+        .map(|status| dense_column_text(status, columns.status_width))
+        .unwrap_or_else(|| " ".repeat(columns.status_width));
     let title = if input.is_selected {
         selected_session_title_span(dense_column_text(input.title, columns.title_width))
     } else {
@@ -2655,6 +2675,7 @@ fn dense_summary_line(input: DenseSummaryInput<'_>) -> Line<'static> {
     let spans = vec![
         input.marker,
         dense_column_text(input.date, columns.date_width).dim(),
+        status.magenta(),
         title,
     ];
     let mut line = Line::from(spans);
@@ -2678,14 +2699,21 @@ fn dense_summary_line(input: DenseSummaryInput<'_>) -> Line<'static> {
 
 struct DenseColumns {
     date_width: usize,
+    status_width: usize,
     title_width: usize,
 }
 
-fn dense_columns(width: usize) -> DenseColumns {
+fn dense_columns(width: usize, show_status_column: bool) -> DenseColumns {
     let date_width = SESSION_META_DATE_WIDTH;
+    let status_width = if show_status_column {
+        SESSION_STATUS_WIDTH.min(width.saturating_sub(date_width))
+    } else {
+        0
+    };
     DenseColumns {
         date_width,
-        title_width: width.saturating_sub(date_width),
+        status_width,
+        title_width: width.saturating_sub(date_width + status_width),
     }
 }
 
@@ -2743,12 +2771,16 @@ fn render_footer_lines(
     cwd: Option<&str>,
     show_cwd: bool,
     width: u16,
+    status: Option<&str>,
 ) -> Vec<Line<'static>> {
     let date = match sort_key {
         ThreadSortKey::CreatedAt => created,
         ThreadSortKey::UpdatedAt => updated,
     };
     let mut parts = vec![FooterPart::Date(date.to_string())];
+    if let Some(status) = status {
+        parts.push(FooterPart::Status(status.to_string()));
+    }
     if show_cwd {
         parts.push(FooterPart::Cwd(cwd.map(str::to_string)));
     }
@@ -2758,6 +2790,7 @@ fn render_footer_lines(
 
 enum FooterPart {
     Date(String),
+    Status(String),
     Branch(Option<String>),
     Cwd(Option<String>),
 }
@@ -2765,7 +2798,7 @@ enum FooterPart {
 impl FooterPart {
     fn text(&self) -> &str {
         match self {
-            FooterPart::Date(text) => text,
+            FooterPart::Date(text) | FooterPart::Status(text) => text,
             FooterPart::Branch(Some(text)) | FooterPart::Cwd(Some(text)) => text,
             FooterPart::Branch(None) => "no branch",
             FooterPart::Cwd(None) => "no cwd",
@@ -2774,7 +2807,7 @@ impl FooterPart {
 
     fn prefix(&self) -> Option<&'static str> {
         match self {
-            FooterPart::Date(_) => None,
+            FooterPart::Date(_) | FooterPart::Status(_) => None,
             FooterPart::Branch(_) => Some(SESSION_META_BRANCH_ICON),
             FooterPart::Cwd(_) => Some(SESSION_META_CWD_ICON),
         }
@@ -2836,6 +2869,7 @@ fn footer_part_width(part: &FooterPart, padded: bool, cwd_width: usize) -> usize
     let actual_width = prefix_width + prefix_gap_width + text_width;
     match part {
         FooterPart::Date(_) if padded => SESSION_META_DATE_WIDTH.max(actual_width),
+        FooterPart::Status(_) if padded => SESSION_STATUS_WIDTH.max(actual_width),
         FooterPart::Cwd(_) if padded => cwd_width,
         _ => actual_width,
     }
@@ -2856,8 +2890,12 @@ fn footer_line(parts: Vec<FooterPart>, width: usize, cwd_width: usize) -> Line<'
         let padded = idx + 1 < part_count;
         let target_width = match part {
             FooterPart::Date(_) if padded => Some(SESSION_META_DATE_WIDTH),
+            FooterPart::Status(_) if padded => Some(SESSION_STATUS_WIDTH),
             FooterPart::Cwd(_) if padded => Some(cwd_width),
-            FooterPart::Date(_) | FooterPart::Branch(_) | FooterPart::Cwd(_) => None,
+            FooterPart::Date(_)
+            | FooterPart::Status(_)
+            | FooterPart::Branch(_)
+            | FooterPart::Cwd(_) => None,
         };
         let used_width = push_footer_part(&mut spans, part, target_width, remaining_width);
         remaining_width = remaining_width.saturating_sub(used_width);
@@ -2882,7 +2920,10 @@ fn push_footer_part(
     let Some(prefix) = part.prefix() else {
         let text = truncate_text(&text, available_width);
         let width = UnicodeWidthStr::width(text.as_str());
-        spans.push(text.dim());
+        match part {
+            FooterPart::Status(_) => spans.push(text.magenta()),
+            _ => spans.push(text.dim()),
+        }
         return width;
     };
 
@@ -2911,6 +2952,13 @@ fn push_footer_part(
         _ => spans.push(text.dim()),
     }
     used_width + rendered_text_width
+}
+
+fn current_row_status<'a>(row: &Row, state: &'a PickerState) -> Option<&'a str> {
+    (state.launch_context == SessionPickerLaunchContext::ExistingSession
+        && row.thread_id.is_some()
+        && row.thread_id == state.current_thread_id)
+        .then_some("current")
 }
 
 fn render_transcript_preview_lines(
@@ -3427,6 +3475,7 @@ mod tests {
             Some("tmp/codex"),
             /*show_cwd*/ true,
             /*width*/ 80,
+            /*status*/ None,
         );
         let created = render_footer_lines(
             ThreadSortKey::CreatedAt,
@@ -3436,6 +3485,7 @@ mod tests {
             Some("tmp/codex"),
             /*show_cwd*/ true,
             /*width*/ 80,
+            /*status*/ None,
         );
 
         assert_eq!(updated.len(), 1);
@@ -3449,6 +3499,74 @@ mod tests {
     }
 
     #[test]
+    fn comfortable_footer_marks_current_thread_for_existing_session_picker() {
+        let current_thread_id = ThreadId::new();
+        let loader = page_only_loader(|_| {});
+        let mut state = PickerState::new(
+            FrameRequester::test_dummy(),
+            loader,
+            ProviderFilter::MatchDefault(String::from("openai")),
+            /*show_all*/ true,
+            /*filter_cwd*/ None,
+            SessionPickerAction::Resume,
+        );
+        state.launch_context = SessionPickerLaunchContext::ExistingSession;
+        state.current_thread_id = Some(current_thread_id);
+        state.relative_time_reference = parse_timestamp_str("2025-01-01T00:00:00Z");
+
+        let row = make_thread_row(current_thread_id, "current session");
+        let rendered = render_comfortable_session_lines(
+            &row, &state, /*is_selected*/ false, /*is_expanded*/ false,
+            /*is_zebra*/ false, /*width*/ 100,
+        )
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(rendered.contains("current"));
+    }
+
+    #[test]
+    fn dense_summary_uses_fixed_status_column_for_current_thread() {
+        let current_thread_id = ThreadId::new();
+        let loader = page_only_loader(|_| {});
+        let mut state = PickerState::new(
+            FrameRequester::test_dummy(),
+            loader,
+            ProviderFilter::MatchDefault(String::from("openai")),
+            /*show_all*/ true,
+            /*filter_cwd*/ None,
+            SessionPickerAction::Resume,
+        );
+        state.launch_context = SessionPickerLaunchContext::ExistingSession;
+        state.current_thread_id = Some(current_thread_id);
+        state.density = SessionListDensity::Dense;
+        state.relative_time_reference = parse_timestamp_str("2025-01-01T00:00:00Z");
+
+        let aligned_title = "aligned session";
+        let current = make_thread_row(current_thread_id, aligned_title);
+        let other = make_thread_row(ThreadId::new(), aligned_title);
+        let current_line = render_dense_session_lines(
+            &current, &state, /*is_selected*/ false, /*is_expanded*/ false,
+            /*is_zebra*/ false, /*width*/ 100,
+        )[0]
+        .to_string();
+        let other_line = render_dense_session_lines(
+            &other, &state, /*is_selected*/ false, /*is_expanded*/ false,
+            /*is_zebra*/ false, /*width*/ 100,
+        )[0]
+        .to_string();
+
+        assert!(current_line.contains("current"));
+        assert!(!other_line.contains("current"));
+        assert_eq!(
+            current_line.find(aligned_title),
+            other_line.find(aligned_title)
+        );
+    }
+
+    #[test]
     fn footer_marks_missing_branch() {
         let footer = render_footer_lines(
             ThreadSortKey::UpdatedAt,
@@ -3458,6 +3576,7 @@ mod tests {
             Some("/tmp/codex"),
             /*show_cwd*/ true,
             /*width*/ 80,
+            /*status*/ None,
         );
 
         assert_eq!(footer.len(), 1);
@@ -3478,6 +3597,7 @@ mod tests {
             Some("~/code/codex.etraut-animations-false-improvements/codex-rs"),
             /*show_cwd*/ true,
             /*width*/ 140,
+            /*status*/ None,
         );
 
         assert_eq!(footer.len(), 1);
@@ -3496,6 +3616,7 @@ mod tests {
             Some(cwd),
             /*show_cwd*/ true,
             /*width*/ 80,
+            /*status*/ None,
         );
 
         assert_eq!(footer.len(), 1);
@@ -3516,6 +3637,7 @@ mod tests {
             Some("~/code/codex.owner-worktree/codex-rs"),
             /*show_cwd*/ false,
             /*width*/ 80,
+            /*status*/ None,
         );
 
         assert_eq!(footer.len(), 1);
@@ -4810,6 +4932,8 @@ session_picker_view = "dense"
     fn dense_selected_summary_line_uses_full_width_selection_style() {
         let line = dense_summary_line(DenseSummaryInput {
             marker: selection_marker(/*is_selected*/ true, /*is_expanded*/ false),
+            status: None,
+            show_status_column: false,
             date: "15m ago",
             title: "Selected dense row",
             is_selected: true,
@@ -4826,6 +4950,8 @@ session_picker_view = "dense"
     fn dense_zebra_summary_line_uses_full_width_background() {
         let line = dense_summary_line(DenseSummaryInput {
             marker: selection_marker(/*is_selected*/ false, /*is_expanded*/ false),
+            status: None,
+            show_status_column: false,
             date: "15m ago",
             title: "Zebra dense row",
             is_selected: false,

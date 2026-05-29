@@ -47,29 +47,17 @@ impl App {
             .iter()
             .enumerate()
             .map(|(idx, (thread_id, entry))| {
-                if self.active_thread_id == Some(*thread_id) {
+                let is_current = self.current_displayed_thread_id() == Some(*thread_id);
+                if is_current {
                     initial_selected_idx = Some(idx);
                 }
-                let id = *thread_id;
                 let is_primary = self.primary_thread_id == Some(*thread_id);
                 let name = format_agent_picker_item_name(
                     entry.agent_nickname.as_deref(),
                     entry.agent_role.as_deref(),
                     is_primary,
                 );
-                let uuid = thread_id.to_string();
-                SelectionItem {
-                    name: name.clone(),
-                    name_prefix_spans: agent_picker_status_dot_spans(entry.is_closed),
-                    description: Some(uuid.clone()),
-                    is_current: self.active_thread_id == Some(*thread_id),
-                    actions: vec![Box::new(move |tx| {
-                        tx.send(AppEvent::SelectAgentThread(id));
-                    })],
-                    dismiss_on_select: true,
-                    search_value: Some(format!("{name} {uuid}")),
-                    ..Default::default()
-                }
+                agent_picker_selection_item(*thread_id, entry, &name, is_current)
             })
             .collect();
 
@@ -90,9 +78,13 @@ impl App {
 
     pub(super) fn closed_state_for_thread_read_error(
         err: &color_eyre::Report,
-        existing_is_closed: Option<bool>,
-    ) -> bool {
-        Self::is_terminal_thread_read_error(err) || existing_is_closed.unwrap_or(false)
+        existing_status: Option<AgentPickerStatus>,
+    ) -> AgentPickerStatus {
+        if Self::is_terminal_thread_read_error(err) {
+            AgentPickerStatus::Closed
+        } else {
+            existing_status.unwrap_or(AgentPickerStatus::Completed)
+        }
     }
 
     pub(super) fn can_fallback_from_include_turns_error(err: &color_eyre::Report) -> bool {
@@ -112,7 +104,7 @@ impl App {
         thread_id: ThreadId,
         agent_nickname: Option<String>,
         agent_role: Option<String>,
-        is_closed: bool,
+        status: AgentPickerStatus,
     ) {
         self.chat_widget.set_collab_agent_metadata(
             thread_id,
@@ -120,7 +112,7 @@ impl App {
             agent_role.clone(),
         );
         self.agent_navigation
-            .upsert(thread_id, agent_nickname, agent_role, is_closed);
+            .upsert(thread_id, agent_nickname, agent_role, status);
         self.sync_active_agent_label();
     }
 
@@ -157,10 +149,7 @@ impl App {
                             .as_ref()
                             .and_then(|entry| entry.agent_role.clone())
                     }),
-                    matches!(
-                        thread.status,
-                        codex_app_server_protocol::ThreadStatus::NotLoaded
-                    ),
+                    agent_picker_status_from_thread_status(&thread.status),
                 );
                 true
             }
@@ -169,21 +158,20 @@ impl App {
                     self.agent_navigation.remove(thread_id);
                     return false;
                 }
-                let is_closed = Self::closed_state_for_thread_read_error(
+                let status = Self::closed_state_for_thread_read_error(
                     &err,
-                    existing_entry.as_ref().map(|entry| entry.is_closed),
+                    existing_entry.as_ref().map(|entry| entry.status),
                 );
                 if let Some(entry) = existing_entry {
                     self.upsert_agent_picker_thread(
                         thread_id,
                         entry.agent_nickname,
                         entry.agent_role,
-                        is_closed,
+                        status,
                     );
                 } else {
                     self.upsert_agent_picker_thread(
-                        thread_id, /*agent_nickname*/ None, /*agent_role*/ None,
-                        is_closed,
+                        thread_id, /*agent_nickname*/ None, /*agent_role*/ None, status,
                     );
                 }
                 true
@@ -302,7 +290,7 @@ impl App {
         let mut is_replay_only = self
             .agent_navigation
             .get(&thread_id)
-            .is_some_and(|entry| entry.is_closed);
+            .is_some_and(|entry| entry.status == AgentPickerStatus::Closed);
         let mut attached_replay_only = false;
         if self.should_attach_live_thread_for_selection(thread_id) {
             match self
@@ -382,7 +370,7 @@ impl App {
             && self
                 .agent_navigation
                 .get(&thread_id)
-                .is_none_or(|entry| !entry.is_closed)
+                .is_none_or(|entry| entry.status != AgentPickerStatus::Closed)
     }
 
     pub(super) fn reset_for_thread_switch(&mut self, tui: &mut tui::Tui) -> Result<()> {
@@ -614,7 +602,7 @@ impl App {
                 thread.thread_id,
                 thread.agent_nickname,
                 thread.agent_role,
-                /*is_closed*/ false,
+                agent_picker_status_from_thread_status(&thread.status),
             );
         }
 
@@ -771,9 +759,49 @@ impl App {
     }
 }
 
+fn agent_picker_selection_item(
+    thread_id: ThreadId,
+    entry: &AgentPickerThreadEntry,
+    name: &str,
+    is_current: bool,
+) -> SelectionItem {
+    let uuid = thread_id.to_string();
+    SelectionItem {
+        name: name.to_string(),
+        name_prefix_spans: agent_picker_status_dot_spans(entry.status),
+        description: Some(agent_picker_status_description(entry.status).to_string()),
+        is_current,
+        actions: vec![Box::new(move |tx| {
+            tx.send(AppEvent::SelectAgentThread(thread_id));
+        })],
+        dismiss_on_select: true,
+        search_value: Some(format!("{name} {uuid}")),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_picker_selection_item_description_uses_lifecycle_status() {
+        let thread_id = ThreadId::new();
+        let entry = AgentPickerThreadEntry {
+            agent_nickname: Some("Robie".to_string()),
+            agent_role: Some("explorer".to_string()),
+            status: AgentPickerStatus::Running,
+        };
+
+        let item = agent_picker_selection_item(thread_id, &entry, "Robie [explorer]", true);
+
+        assert_eq!(item.description, Some("running".to_string()));
+        assert!(item.is_current);
+        assert_eq!(
+            item.search_value,
+            Some(format!("Robie [explorer] {thread_id}"))
+        );
+    }
 
     #[test]
     fn terminal_thread_read_error_detection_matches_not_loaded_errors() {
@@ -799,9 +827,10 @@ mod tests {
             "thread/read failed during TUI session lookup: thread/read transport error: broken pipe"
         );
 
-        assert!(!App::closed_state_for_thread_read_error(
-            &err, /*existing_is_closed*/ None
-        ));
+        assert_eq!(
+            App::closed_state_for_thread_read_error(&err, /*existing_status*/ None),
+            AgentPickerStatus::Completed
+        );
     }
 
     #[test]
@@ -810,9 +839,10 @@ mod tests {
             "thread/read failed during TUI session lookup: thread/read failed: thread not loaded: thr_123"
         );
 
-        assert!(App::closed_state_for_thread_read_error(
-            &err, /*existing_is_closed*/ None
-        ));
+        assert_eq!(
+            App::closed_state_for_thread_read_error(&err, /*existing_status*/ None),
+            AgentPickerStatus::Closed
+        );
     }
 
     #[test]

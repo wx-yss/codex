@@ -15,17 +15,19 @@
 //! found. The primary thread itself is never included in the output.
 
 use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadStatus;
 use codex_protocol::ThreadId;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// A subagent thread discovered by the spawn-tree walk, carrying just enough metadata for the
 /// TUI to register it in the navigation cache and rendering metadata map.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LoadedSubagentThread {
     pub(crate) thread_id: ThreadId,
     pub(crate) agent_nickname: Option<String>,
     pub(crate) agent_role: Option<String>,
+    pub(crate) status: ThreadStatus,
 }
 
 /// Walks the spawn tree rooted at `primary_thread_id` and returns every descendant subagent.
@@ -84,6 +86,7 @@ pub(crate) fn find_loaded_subagent_threads_for_primary(
                     thread_id,
                     agent_nickname: thread.agent_nickname,
                     agent_role: thread.agent_role,
+                    status: thread.status,
                 })
         })
         .collect();
@@ -177,6 +180,9 @@ mod tests {
         );
         child.agent_nickname = Some("Scout".to_string());
         child.agent_role = Some("explorer".to_string());
+        child.status = ThreadStatus::Active {
+            active_flags: Vec::new(),
+        };
 
         let mut grandchild = test_thread(
             grandchild_thread_id,
@@ -207,11 +213,15 @@ mod tests {
                     thread_id: child_thread_id,
                     agent_nickname: Some("Scout".to_string()),
                     agent_role: Some("explorer".to_string()),
+                    status: ThreadStatus::Active {
+                        active_flags: Vec::new(),
+                    },
                 },
                 LoadedSubagentThread {
                     thread_id: grandchild_thread_id,
                     agent_nickname: Some("Atlas".to_string()),
                     agent_role: Some("worker".to_string()),
+                    status: ThreadStatus::Idle,
                 },
             ]
         );

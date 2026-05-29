@@ -80,6 +80,7 @@ impl App {
                     &self.config,
                     /*show_all*/ false,
                     /*include_non_interactive*/ false,
+                    self.current_resume_picker_thread_id(),
                     picker_app_server,
                 )
                 .await?

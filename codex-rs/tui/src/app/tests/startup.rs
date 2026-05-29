@@ -1,4 +1,5 @@
 use super::*;
+use crate::multi_agents::AgentPickerStatus;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -229,7 +230,7 @@ fn stale_startup_thread_started_removes_local_routing_state() -> Result<()> {
                 stale_thread_id,
                 /*agent_nickname*/ None,
                 /*agent_role*/ None,
-                /*is_closed*/ false,
+                AgentPickerStatus::Completed,
             );
             assert!(app.thread_event_channels.contains_key(&stale_thread_id));
             assert!(app.agent_navigation.get(&stale_thread_id).is_some());
