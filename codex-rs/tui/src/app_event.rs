@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
 use codex_app_server_protocol::MarketplaceUpgradeResponse;
@@ -553,6 +554,29 @@ pub(crate) enum AppEvent {
         result: Result<Vec<McpServerStatus>, String>,
         detail: McpServerStatusDetail,
         thread_id: Option<ThreadId>,
+    },
+
+    /// Fetch MCP server statuses for the management popup.
+    FetchMcpManagementStatus {
+        thread_id: Option<ThreadId>,
+    },
+
+    /// Result of loading MCP server statuses for the management popup.
+    McpManagementStatusLoaded {
+        result: Result<Vec<McpServerStatus>, String>,
+    },
+
+    /// Enable or disable a configured MCP server for the next turn.
+    SetMcpServerEnabled {
+        server_name: String,
+        enabled: bool,
+    },
+
+    /// Result of enabling or disabling a configured MCP server.
+    McpServerEnabledSet {
+        server_name: String,
+        enabled: bool,
+        result: Result<ConfigWriteResponse, String>,
     },
 
     /// Result of the startup skills refresh that runs after the first frame is scheduled.

@@ -664,6 +664,47 @@ impl App {
             } => {
                 self.handle_mcp_inventory_result(result, detail, thread_id);
             }
+            AppEvent::FetchMcpManagementStatus { thread_id } => {
+                self.fetch_mcp_management_status(app_server, thread_id);
+            }
+            AppEvent::McpManagementStatusLoaded { result } => {
+                self.chat_widget.on_mcp_management_status_loaded(result);
+            }
+            AppEvent::SetMcpServerEnabled {
+                server_name,
+                enabled,
+            } => {
+                self.chat_widget
+                    .on_mcp_server_enabled_pending(server_name.clone(), enabled);
+                self.set_mcp_server_enabled(app_server, server_name, enabled);
+            }
+            AppEvent::McpServerEnabledSet {
+                server_name,
+                enabled,
+                result,
+            } => {
+                let queued_enabled = self
+                    .pending_mcp_server_enabled_writes
+                    .get_mut(&server_name)
+                    .and_then(Option::take);
+                let should_apply_result = if let Some(queued_enabled) = queued_enabled
+                    && (result.is_err() || queued_enabled != enabled)
+                {
+                    self.spawn_mcp_server_enabled_write(
+                        app_server,
+                        server_name.clone(),
+                        queued_enabled,
+                    );
+                    false
+                } else {
+                    true
+                };
+                if should_apply_result {
+                    self.pending_mcp_server_enabled_writes.remove(&server_name);
+                    self.chat_widget
+                        .on_mcp_server_enabled_set(server_name, enabled, result);
+                }
+            }
             AppEvent::SkillsListLoaded { result } => {
                 self.handle_skills_list_result(
                     result.map_err(|err| color_eyre::eyre::eyre!(err)),

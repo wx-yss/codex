@@ -45,6 +45,26 @@ impl App {
         });
     }
 
+    pub(super) fn fetch_mcp_management_status(
+        &mut self,
+        app_server: &AppServerSession,
+        thread_id: Option<ThreadId>,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        let request_thread_id = self.mcp_inventory_request_thread_id(thread_id);
+        tokio::spawn(async move {
+            let result = fetch_all_mcp_server_statuses(
+                request_handle,
+                McpServerStatusDetail::ToolsAndAuthOnly,
+                request_thread_id,
+            )
+            .await
+            .map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::McpManagementStatusLoaded { result });
+        });
+    }
+
     fn mcp_inventory_request_thread_id(&self, thread_id: Option<ThreadId>) -> Option<ThreadId> {
         thread_id.filter(|thread_id| self.is_live_agent_request_thread(*thread_id))
     }
@@ -330,6 +350,43 @@ impl App {
             app_event_tx.send(AppEvent::PluginEnabledSet {
                 cwd: cwd_for_event,
                 plugin_id: plugin_id_for_event,
+                enabled,
+                result,
+            });
+        });
+    }
+
+    pub(super) fn set_mcp_server_enabled(
+        &mut self,
+        app_server: &AppServerSession,
+        server_name: String,
+        enabled: bool,
+    ) {
+        if let Some(queued_enabled) = self.pending_mcp_server_enabled_writes.get_mut(&server_name) {
+            *queued_enabled = Some(enabled);
+            return;
+        }
+
+        self.pending_mcp_server_enabled_writes
+            .insert(server_name.clone(), None);
+        self.spawn_mcp_server_enabled_write(app_server, server_name, enabled);
+    }
+
+    pub(super) fn spawn_mcp_server_enabled_write(
+        &mut self,
+        app_server: &AppServerSession,
+        server_name: String,
+        enabled: bool,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let server_name_for_event = server_name.clone();
+            let result = write_mcp_server_enabled(request_handle, server_name, enabled)
+                .await
+                .map_err(|err| format!("Failed to update MCP server config: {err}"));
+            app_event_tx.send(AppEvent::McpServerEnabledSet {
+                server_name: server_name_for_event,
                 enabled,
                 result,
             });
@@ -888,6 +945,53 @@ pub(super) async fn write_plugin_enabled(
         .wrap_err("config/value/write failed while updating plugin enablement in TUI")
 }
 
+pub(super) async fn write_mcp_server_enabled(
+    request_handle: AppServerRequestHandle,
+    server_name: String,
+    enabled: bool,
+) -> Result<ConfigWriteResponse> {
+    let request_id = RequestId::String(format!("mcp-server-enable-{}", Uuid::new_v4()));
+    let write_response: ConfigWriteResponse = request_handle
+        .request_typed(ClientRequest::ConfigBatchWrite {
+            request_id,
+            params: ConfigBatchWriteParams {
+                edits: vec![codex_app_server_protocol::ConfigEdit {
+                    key_path: mcp_server_enabled_key_path(&server_name),
+                    value: serde_json::json!(enabled),
+                    merge_strategy: MergeStrategy::Upsert,
+                }],
+                file_path: None,
+                expected_version: None,
+                reload_user_config: true,
+            },
+        })
+        .await
+        .wrap_err("config/batchWrite failed while updating MCP server enablement in TUI")?;
+
+    let request_id = RequestId::String(format!("mcp-server-refresh-{}", Uuid::new_v4()));
+    let _: McpServerRefreshResponse = request_handle
+        .request_typed(ClientRequest::McpServerRefresh {
+            request_id,
+            params: None,
+        })
+        .await
+        .wrap_err("config/mcpServer/reload failed after updating MCP server enablement in TUI")?;
+
+    Ok(write_response)
+}
+
+pub(super) fn mcp_server_enabled_key_path(server_name: &str) -> String {
+    format!(
+        "mcp_servers.{}.enabled",
+        quote_key_path_segment(server_name)
+    )
+}
+
+fn quote_key_path_segment(segment: &str) -> String {
+    let escaped = segment.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
 pub(super) async fn write_hook_enabled(
     request_handle: AppServerRequestHandle,
     key: String,
@@ -1110,6 +1214,22 @@ mod tests {
         assert_eq!(
             auth_statuses.get("disabled"),
             Some(&McpAuthStatus::Unsupported)
+        );
+    }
+
+    #[test]
+    fn mcp_server_enabled_key_path_updates_only_enabled_leaf() {
+        assert_eq!(
+            mcp_server_enabled_key_path("docs"),
+            "mcp_servers.\"docs\".enabled"
+        );
+        assert_eq!(
+            mcp_server_enabled_key_path("team.docs"),
+            "mcp_servers.\"team.docs\".enabled"
+        );
+        assert_eq!(
+            mcp_server_enabled_key_path("team\"docs"),
+            "mcp_servers.\"team\\\"docs\".enabled"
         );
     }
 

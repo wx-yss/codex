@@ -31,3 +31,17 @@
 - 当前分支复刻时直接基于 app-server 的 `mcpServerStatus/list` 获取工具数量与 Auth 状态。
 - 启停配置写入只更新 `mcp_servers.<server>.enabled` 叶子字段，避免覆盖 command、args、cwd、env、headers 等配置。
 - 写入成功后调用 `config/mcpServer/reload` 排队刷新 MCP 配置；当前连接不立即重启，下一轮生效。
+
+## 当前分支复刻记录
+
+- `/mcp` 入口改为打开 C 区 MCP server 管理弹窗，并异步请求 `mcpServerStatus/list` 刷新工具数量和 Auth 状态；旧的 S 区 MCP inventory history cell 代码暂留，但 `/mcp` 不再走旧清单输出路径。
+- 弹窗以当前 `config.mcp_servers` 为准生成 server 列表，所以已禁用 server 仍会显示；app-server status 只补充工具数量和 Auth 状态。
+- `/mcp verbose` 和其他 `/mcp` 参数统一显示 `Usage: /mcp`，不再触发 verbose 清单。
+- 启停写入使用 `config/batchWrite` 的 `mcp_servers."<server>".enabled` 叶子路径，并在成功后调用 `config/mcpServer/reload`。
+- App 层按 server 名串行化启停写入；同一 server 连续切换时，后一次选择进入 pending 队列，最终落盘状态以最后一次选择为准。
+
+## 踩坑记录
+
+- 通用 `ListSelectionView` 在搜索输入非空时会把空格当作搜索字符处理，不能直接满足“搜索后空格切换选中 server”的交互；本功能使用 MCP 专用 view，交互模式参考 skills toggle。
+- MCP server 名称可能包含 `.` 或引号，写配置时必须把 key path 的 server 段写成 quoted segment，避免误拆成多级路径。
+- 异步 status 刷新可能晚于用户切换操作返回；弹窗刷新时必须叠加 pending enabled 覆盖，避免写入未完成时 UI 又显示回旧状态。

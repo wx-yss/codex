@@ -1747,40 +1747,48 @@ async fn slash_memory_drop_reports_stubbed_feature() {
 }
 
 #[tokio::test]
-async fn slash_mcp_requests_inventory_via_app_server() {
+async fn slash_mcp_opens_management_popup_without_inventory_output() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();
     chat.thread_id = Some(thread_id);
 
     chat.dispatch_command(SlashCommand::Mcp);
 
-    assert!(active_blob(&chat).contains("Loading MCP inventory"));
     assert_matches!(
         rx.try_recv(),
-        Ok(AppEvent::FetchMcpInventory {
-            detail: McpServerStatusDetail::ToolsAndAuthOnly,
+        Ok(AppEvent::FetchMcpManagementStatus {
             thread_id: Some(actual_thread_id)
         }) if actual_thread_id == thread_id
     );
+    assert!(
+        chat.bottom_pane
+            .selected_index_for_active_view(mcp_management::MCP_MANAGEMENT_VIEW_ID)
+            .is_some()
+            || chat.config.mcp_servers.get().is_empty()
+    );
+    assert!(!active_blob(&chat).contains("Loading MCP inventory"));
     assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
 }
 
 #[tokio::test]
-async fn slash_mcp_verbose_requests_full_inventory_via_app_server() {
+async fn slash_mcp_verbose_shows_usage_without_inventory_output() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();
     chat.thread_id = Some(thread_id);
 
     submit_composer_text(&mut chat, "/mcp verbose");
 
-    assert!(active_blob(&chat).contains("Loading MCP inventory"));
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::FetchMcpInventory {
-            detail: McpServerStatusDetail::Full,
-            thread_id: Some(actual_thread_id)
-        }) if actual_thread_id == thread_id
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Usage: /mcp"),
+        "expected usage message, got: {rendered:?}"
     );
+    assert!(!active_blob(&chat).contains("Loading MCP inventory"));
     assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
 }
 
@@ -1797,7 +1805,7 @@ async fn slash_mcp_invalid_args_show_usage() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        rendered.contains("Usage: /mcp [verbose]"),
+        rendered.contains("Usage: /mcp"),
         "expected usage message, got: {rendered:?}"
     );
     assert_eq!(recall_latest_after_clearing(&mut chat), "/mcp full");

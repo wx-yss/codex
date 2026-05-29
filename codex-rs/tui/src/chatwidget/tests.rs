@@ -4,6 +4,7 @@
 //! snapshot-based so that layout regressions and status/header changes show up as stable,
 //! reviewable diffs.
 
+pub(super) use super::mcp_management;
 pub(super) use super::*;
 pub(super) use crate::app_command::AppCommand as Op;
 pub(super) use crate::app_event::AppEvent;

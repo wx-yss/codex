@@ -106,6 +106,7 @@ use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
 #[cfg(test)]
 use codex_app_server_protocol::McpAuthStatus;
+use codex_app_server_protocol::McpServerRefreshResponse;
 use codex_app_server_protocol::McpServerStatus;
 use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::MergeStrategy;
@@ -563,6 +564,9 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+    // Serialize MCP server enablement writes per server so repeated toggles
+    // settle on the user's final choice.
+    pending_mcp_server_enabled_writes: HashMap<String, Option<bool>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1019,6 +1023,7 @@ See the Codex keymap documentation for supported actions and examples."
             pending_startup_thread_start,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            pending_mcp_server_enabled_writes: HashMap::new(),
         };
         if let Some(entry) = startup_hooks_browser {
             app.chat_widget.open_hooks_browser(entry);

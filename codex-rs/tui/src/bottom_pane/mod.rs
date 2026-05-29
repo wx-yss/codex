@@ -1118,6 +1118,24 @@ impl BottomPane {
         true
     }
 
+    pub(crate) fn replace_active_view_with_view(
+        &mut self,
+        view_id: &'static str,
+        view: Box<dyn BottomPaneView>,
+    ) -> bool {
+        let is_match = self
+            .view_stack
+            .last()
+            .is_some_and(|view| view.view_id() == Some(view_id));
+        if !is_match {
+            return false;
+        }
+
+        self.view_stack.pop();
+        self.push_view(view);
+        true
+    }
+
     pub(crate) fn standard_popup_hint_line(&self) -> Line<'static> {
         popup_consts::standard_popup_hint_line_for_keymap(&self.keymap.list)
     }

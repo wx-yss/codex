@@ -35,6 +35,7 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
 const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
+const MCP_USAGE: &str = "Usage: /mcp";
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -416,7 +417,7 @@ impl ChatWidget {
                 self.add_app_server_stub_message("Memory maintenance");
             }
             SlashCommand::Mcp => {
-                self.add_mcp_output(McpServerStatusDetail::ToolsAndAuthOnly);
+                self.open_mcp_management_popup();
             }
             SlashCommand::Apps => {
                 self.add_connectors_output();
@@ -589,8 +590,8 @@ impl ChatWidget {
                 self.handle_ide_command_args(trimmed);
             }
             SlashCommand::Mcp => match trimmed.to_ascii_lowercase().as_str() {
-                "verbose" => self.add_mcp_output(McpServerStatusDetail::Full),
-                _ => self.add_error_message("Usage: /mcp [verbose]".to_string()),
+                "verbose" => self.add_error_message(MCP_USAGE.to_string()),
+                _ => self.add_error_message(MCP_USAGE.to_string()),
             },
             SlashCommand::Keymap => match trimmed.to_ascii_lowercase().as_str() {
                 "" => self.open_keymap_picker(),
