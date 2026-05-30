@@ -18,7 +18,6 @@ use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
 use codex_app_server_protocol::MarketplaceUpgradeResponse;
 use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::PluginInstallResponse;
 use codex_app_server_protocol::PluginListResponse;
 use codex_app_server_protocol::PluginReadParams;
@@ -542,19 +541,6 @@ pub(crate) enum AppEvent {
 
     /// Abandon the post-install plugin app-auth flow.
     PluginInstallAuthAbandon,
-
-    /// Fetch MCP inventory via app-server RPCs and render it into history.
-    FetchMcpInventory {
-        detail: McpServerStatusDetail,
-        thread_id: Option<ThreadId>,
-    },
-
-    /// Result of fetching MCP inventory via app-server RPCs.
-    McpInventoryLoaded {
-        result: Result<Vec<McpServerStatus>, String>,
-        detail: McpServerStatusDetail,
-        thread_id: Option<ThreadId>,
-    },
 
     /// Fetch MCP server statuses for the management popup.
     FetchMcpManagementStatus {

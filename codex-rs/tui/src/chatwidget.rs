@@ -103,7 +103,6 @@ use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::ModelVerification as AppServerModelVerification;
 use codex_app_server_protocol::RateLimitReachedType;
 use codex_app_server_protocol::RateLimitSnapshot;
@@ -1473,44 +1472,6 @@ impl ChatWidget {
             line.extend([". To resume this thread run ".into(), hint.cyan()]);
         }
         PlainHistoryCell::new(vec![line.into()])
-    }
-
-    /// Begin the asynchronous MCP inventory flow: show a loading spinner and
-    /// request the app-server fetch via `AppEvent::FetchMcpInventory`.
-    ///
-    /// The spinner lives in `active_cell` and is cleared by
-    /// [`clear_mcp_inventory_loading`] once the result arrives.
-    pub(crate) fn add_mcp_output(&mut self, detail: McpServerStatusDetail) {
-        self.flush_answer_stream_with_separator();
-        self.flush_active_cell();
-        self.transcript.active_cell = Some(Box::new(history_cell::new_mcp_inventory_loading(
-            self.config.animations,
-        )));
-        self.bump_active_cell_revision();
-        self.request_redraw();
-        self.app_event_tx.send(AppEvent::FetchMcpInventory {
-            detail,
-            thread_id: self.thread_id(),
-        });
-    }
-
-    /// Remove the MCP loading spinner if it is still the active cell.
-    ///
-    /// Uses `Any`-based type checking so that a late-arriving inventory result
-    /// does not accidentally clear an unrelated cell that was set in the meantime.
-    pub(crate) fn clear_mcp_inventory_loading(&mut self) {
-        let Some(active) = self.transcript.active_cell.as_ref() else {
-            return;
-        };
-        if !active
-            .as_any()
-            .is::<history_cell::McpInventoryLoadingCell>()
-        {
-            return;
-        }
-        self.transcript.active_cell = None;
-        self.bump_active_cell_revision();
-        self.request_redraw();
     }
 
     /// Forward file-search results to the bottom pane.

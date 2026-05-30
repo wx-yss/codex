@@ -48,8 +48,11 @@ use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
 use base64::Engine;
 use codex_app_server_protocol::AskForApproval;
+#[cfg(test)]
 use codex_app_server_protocol::McpAuthStatus;
+#[cfg(test)]
 use codex_app_server_protocol::McpServerStatus;
+#[cfg(test)]
 use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::ToolRequestUserInputAnswer;
 use codex_app_server_protocol::ToolRequestUserInputQuestion;

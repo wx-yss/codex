@@ -206,6 +206,7 @@ async fn queued_slash_review_with_args_dispatches_after_active_turn() {
 #[tokio::test]
 async fn user_prompt_submits_prompt_body_with_inline_args() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
     install_user_prompt(
         &mut chat,
         "opsx-apply",
@@ -1840,7 +1841,7 @@ async fn slash_mcp_opens_management_popup_without_inventory_output() {
             .is_some()
             || chat.config.mcp_servers.get().is_empty()
     );
-    assert!(!active_blob(&chat).contains("Loading MCP inventory"));
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
     assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
 }
 
@@ -1862,7 +1863,7 @@ async fn slash_mcp_verbose_shows_usage_without_inventory_output() {
         rendered.contains("Usage: /mcp"),
         "expected usage message, got: {rendered:?}"
     );
-    assert!(!active_blob(&chat).contains("Loading MCP inventory"));
+    assert!(!rendered.contains("Loading MCP inventory"));
     assert!(op_rx.try_recv().is_err(), "expected no core op to be sent");
 }
 

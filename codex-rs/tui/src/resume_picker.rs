@@ -3302,6 +3302,21 @@ mod tests {
         }
     }
 
+    fn make_thread_row(thread_id: ThreadId, title: &str) -> Row {
+        let timestamp =
+            parse_timestamp_str("2025-01-01T00:00:00Z").expect("timestamp should parse");
+        Row {
+            path: None,
+            preview: title.to_string(),
+            thread_id: Some(thread_id),
+            thread_name: Some(title.to_string()),
+            created_at: Some(timestamp),
+            updated_at: Some(timestamp),
+            cwd: None,
+            git_branch: None,
+        }
+    }
+
     fn footer_lines_text(state: &PickerState, width: u16) -> String {
         footer_hint_lines(state, width)
             .into_iter()

@@ -244,14 +244,6 @@ impl CommandPopup {
 }
 
 impl CommandItem {
-    pub(crate) fn command(&self) -> &str {
-        match self {
-            Self::Builtin(cmd) => cmd.command(),
-            Self::ServiceTier(command) => &command.name,
-            Self::UserPrompt(prompt) => prompt.name.as_str(),
-        }
-    }
-
     pub(crate) fn full_command(&self) -> String {
         match self {
             Self::Builtin(cmd) => cmd.command().to_string(),

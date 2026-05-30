@@ -51,11 +51,14 @@ async fn handle_spawn_agent(
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
-    let request_agent_type = arguments
+    let request_arguments: JsonValue = parse_arguments(&arguments)?;
+    let request_agent_type = request_arguments
         .get("agent_type")
         .and_then(JsonValue::as_str)
         .map(str::to_string);
-    let request_fork_context = arguments.get("fork_context").and_then(JsonValue::as_bool);
+    let request_fork_context = request_arguments
+        .get("fork_context")
+        .and_then(JsonValue::as_bool);
     let args: SpawnAgentArgs = parse_arguments(&arguments)?;
     let role_name = args
         .agent_type

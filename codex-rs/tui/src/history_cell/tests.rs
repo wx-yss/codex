@@ -1117,24 +1117,6 @@ fn active_mcp_tool_call_snapshot() {
 }
 
 #[test]
-fn mcp_inventory_loading_snapshot() {
-    let cell = new_mcp_inventory_loading(/*animations_enabled*/ true);
-    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
-
-    insta::assert_snapshot!(rendered);
-}
-
-#[test]
-fn mcp_inventory_loading_without_animations_is_stable() {
-    let cell = new_mcp_inventory_loading(/*animations_enabled*/ false);
-    let first = render_lines(&cell.display_lines(/*width*/ 80));
-    let second = render_lines(&cell.display_lines(/*width*/ 80));
-
-    assert_eq!(first, second);
-    assert_eq!(first, vec!["• Loading MCP inventory…".to_string()]);
-}
-
-#[test]
 fn completed_mcp_tool_call_success_snapshot() {
     let invocation = McpInvocation {
         server: "search".into(),

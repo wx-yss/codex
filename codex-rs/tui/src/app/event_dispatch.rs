@@ -654,16 +654,6 @@ impl App {
                         .on_plugin_enabled_set(cwd, plugin_id, enabled, result);
                 }
             }
-            AppEvent::FetchMcpInventory { detail, thread_id } => {
-                self.fetch_mcp_inventory(app_server, detail, thread_id);
-            }
-            AppEvent::McpInventoryLoaded {
-                result,
-                detail,
-                thread_id,
-            } => {
-                self.handle_mcp_inventory_result(result, detail, thread_id);
-            }
             AppEvent::FetchMcpManagementStatus { thread_id } => {
                 self.fetch_mcp_management_status(app_server, thread_id);
             }

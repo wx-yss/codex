@@ -15,6 +15,7 @@ impl HistoryCell for CompletedMcpToolCallWithImageOutput {
         vec![Line::from("tool result (image output)")]
     }
 }
+#[cfg(test)]
 fn mcp_auth_status_label(status: McpAuthStatus) -> &'static str {
     match status {
         McpAuthStatus::Unsupported => "Unsupported",
@@ -315,26 +316,6 @@ fn decode_mcp_image(block: &serde_json::Value) -> Option<DynamicImage> {
         })
         .ok()
 }
-/// Render a summary of configured MCP servers from the current `Config`.
-pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
-    let lines: Vec<Line<'static>> = vec![
-        "/mcp".magenta().into(),
-        "".into(),
-        vec!["🔌  ".into(), "MCP Tools".bold()].into(),
-        "".into(),
-        "  • No MCP servers configured.".italic().into(),
-        Line::from(vec![
-            "    See the ".into(),
-            "\u{1b}]8;;https://developers.openai.com/codex/mcp\u{7}MCP docs\u{1b}]8;;\u{7}"
-                .underlined(),
-            " to configure them.".into(),
-        ])
-        .style(Style::default().add_modifier(Modifier::DIM)),
-    ];
-
-    PlainHistoryCell { lines }
-}
-
 #[cfg(test)]
 /// Render MCP tools grouped by connection using the fully-qualified tool names.
 pub(crate) fn new_mcp_tools_output(
@@ -518,6 +499,7 @@ pub(crate) fn new_mcp_tools_output(
 /// This mirrors the layout of [`new_mcp_tools_output`] but sources data from
 /// the paginated RPC response rather than the in-process `McpManager`. The
 /// `detail` flag controls whether resources and resource templates are rendered.
+#[cfg(test)]
 pub(crate) fn new_mcp_tools_output_from_statuses(
     statuses: &[McpServerStatus],
     detail: McpServerStatusDetail,
@@ -610,62 +592,6 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
     }
 
     PlainHistoryCell { lines }
-}
-/// A transient history cell that shows an animated spinner while the MCP
-/// inventory RPC is in flight.
-///
-/// Inserted as the `active_cell` by `ChatWidget::add_mcp_output()` and removed
-/// once the fetch completes. The app removes committed copies from transcript
-/// history, while `ChatWidget::clear_mcp_inventory_loading()` only clears the
-/// in-flight `active_cell`.
-#[derive(Debug)]
-pub(crate) struct McpInventoryLoadingCell {
-    start_time: Instant,
-    animations_enabled: bool,
-}
-
-impl McpInventoryLoadingCell {
-    pub(crate) fn new(animations_enabled: bool) -> Self {
-        Self {
-            start_time: Instant::now(),
-            animations_enabled,
-        }
-    }
-}
-
-impl HistoryCell for McpInventoryLoadingCell {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        vec![
-            vec![
-                activity_indicator(
-                    Some(self.start_time),
-                    MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
-                " ".into(),
-                "Loading MCP inventory".bold(),
-                "…".dim(),
-            ]
-            .into(),
-        ]
-    }
-
-    fn raw_lines(&self) -> Vec<Line<'static>> {
-        vec![Line::from("Loading MCP inventory...")]
-    }
-
-    fn transcript_animation_tick(&self) -> Option<u64> {
-        if !self.animations_enabled {
-            return None;
-        }
-        Some((self.start_time.elapsed().as_millis() / 50) as u64)
-    }
-}
-
-/// Convenience constructor for [`McpInventoryLoadingCell`].
-pub(crate) fn new_mcp_inventory_loading(animations_enabled: bool) -> McpInventoryLoadingCell {
-    McpInventoryLoadingCell::new(animations_enabled)
 }
 fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
     let args_str = invocation
