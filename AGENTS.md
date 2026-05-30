@@ -93,7 +93,9 @@ correctness, or unavoidable project-wide constraints.
 - 调试日志规范：
   - 日志调用和级别：`tracing::info`
   - 日志统一前缀：`YSS_DEBUG_<日志标识>_`
-  - 日志文件：`~/.codex/log/codex-tui.log`
+  - 当前版本日志默认写入 SQLite：`~/.codex/logs_2.sqlite`
+  - 查询调试日志示例：
+    - `sqlite3 -readonly ~/.codex/logs_2.sqlite "select datetime(ts,'unixepoch','localtime'), level, target, feedback_log_body from logs where feedback_log_body like 'YSS_DEBUG_%' order by ts desc, ts_nanos desc limit 80;"`
 - 加日志遵循“最小成本原则”：
   - 怎么快怎么来
   - 不做额外重构
