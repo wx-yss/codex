@@ -466,7 +466,7 @@ async fn prefetch_rate_limits_is_gated_on_chatgpt_auth_provider() {
 }
 
 #[tokio::test]
-async fn rate_limit_warnings_emit_thresholds() {
+async fn rate_limit_warnings_are_suppressed() {
     let mut state = RateLimitWarningState::default();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -479,26 +479,13 @@ async fn rate_limit_warnings_emit_thresholds() {
 
     assert_eq!(
         warnings,
-        vec![
-            String::from(
-                "Heads up, you have less than 25% of your 5h limit left. Run /status for a breakdown."
-            ),
-            String::from(
-                "Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.",
-            ),
-            String::from(
-                "Heads up, you have less than 5% of your 5h limit left. Run /status for a breakdown."
-            ),
-            String::from(
-                "Heads up, you have less than 5% of your weekly limit left. Run /status for a breakdown.",
-            ),
-        ],
-        "expected one warning per limit for the highest crossed threshold"
+        Vec::<String>::new(),
+        "expected 5h and weekly low-limit warning messages to stay hidden"
     );
 }
 
 #[tokio::test]
-async fn test_rate_limit_warnings_monthly() {
+async fn rate_limit_warnings_suppress_monthly_limits() {
     let mut state = RateLimitWarningState::default();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -510,10 +497,8 @@ async fn test_rate_limit_warnings_monthly() {
     ));
     assert_eq!(
         warnings,
-        vec![String::from(
-            "Heads up, you have less than 25% of your monthly limit left. Run /status for a breakdown.",
-        ),],
-        "expected one warning per limit for the highest crossed threshold"
+        Vec::<String>::new(),
+        "expected monthly low-limit warning messages to stay hidden"
     );
 }
 
@@ -528,7 +513,7 @@ fn rate_limit_duration_labels_only_render_supported_windows() {
 }
 
 #[tokio::test]
-async fn test_rate_limit_warnings_use_generic_fallback_labels() {
+async fn rate_limit_warnings_suppress_generic_fallback_labels() {
     let mut state = RateLimitWarningState::default();
 
     assert_eq!(
@@ -538,19 +523,12 @@ async fn test_rate_limit_warnings_use_generic_fallback_labels() {
             /*primary_used_percent*/ Some(75.0),
             /*primary_window_minutes*/ None,
         ),
-        vec![
-            String::from(
-                "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
-            ),
-            String::from(
-                "Heads up, you have less than 25% of your usage limit left. Run /status for a breakdown.",
-            ),
-        ],
+        Vec::<String>::new(),
     );
 }
 
 #[tokio::test]
-async fn test_rate_limit_warnings_use_secondary_fallback_for_unsupported_window() {
+async fn rate_limit_warnings_suppress_unsupported_window() {
     let mut state = RateLimitWarningState::default();
 
     assert_eq!(
@@ -560,9 +538,7 @@ async fn test_rate_limit_warnings_use_secondary_fallback_for_unsupported_window(
             /*primary_used_percent*/ None,
             /*primary_window_minutes*/ None,
         ),
-        vec![String::from(
-            "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
-        )],
+        Vec::<String>::new(),
     );
 }
 
