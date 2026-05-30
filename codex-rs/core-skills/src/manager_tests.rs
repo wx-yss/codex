@@ -99,6 +99,51 @@ fn write_demo_skill(tempdir: &TempDir) -> PathBuf {
     skill_path
 }
 
+#[cfg(unix)]
+fn write_skill_under_root(root: &Path, dir: &str, name: &str) {
+    let skill_dir = root.join(dir);
+    fs::create_dir_all(&skill_dir).expect("create provider skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: from provider\n---\n\n# Body\n"),
+    )
+    .expect("write provider skill");
+}
+
+#[cfg(unix)]
+fn write_provider_script(home_dir: &Path, root_path: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let provider_dir = home_dir.join(".agents/codex/skill-root-providers.d");
+    fs::create_dir_all(&provider_dir).expect("create provider dir");
+    let provider_path = provider_dir.join("dynamic-root");
+    let stdout = serde_json::json!({
+        "roots": [
+            { "path": root_path.to_string_lossy() }
+        ]
+    })
+    .to_string();
+    fs::write(
+        &provider_path,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' {}\n",
+            shell_single_quote(&stdout)
+        ),
+    )
+    .expect("write provider script");
+    let mut permissions = fs::metadata(&provider_path)
+        .expect("provider metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&provider_path, permissions).expect("chmod provider script");
+    provider_path
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 fn user_config_layer(codex_home: &TempDir, config_toml: &str) -> ConfigLayerEntry {
     let config_path = AbsolutePathBuf::try_from(codex_home.path().join(CONFIG_TOML_FILE))
         .expect("user config path should be absolute");
@@ -175,6 +220,29 @@ async fn skills_for_config_with_stack(
         .await
 }
 
+#[cfg(unix)]
+async fn skills_for_roots_with_stack(
+    skills_manager: &SkillsManager,
+    roots: Vec<crate::loader::SkillRoot>,
+    config_layer_stack: &ConfigLayerStack,
+) -> SkillLoadOutcome {
+    let skill_config_rules = skill_config_rules_from_stack(config_layer_stack);
+    let cache_key = config_skills_cache_key(&roots, &skill_config_rules);
+    if let Some(outcome) = skills_manager.cached_outcome_for_config(&cache_key) {
+        return outcome;
+    }
+
+    let outcome = skills_manager
+        .build_skill_outcome(roots, &skill_config_rules)
+        .await;
+    let mut cache = skills_manager
+        .cache_by_config
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache.insert(cache_key, outcome.clone());
+    outcome
+}
+
 #[test]
 fn new_with_disabled_bundled_skills_removes_stale_cached_system_skills() {
     let codex_home = tempfile::tempdir().expect("tempdir");
@@ -219,6 +287,82 @@ async fn skills_for_config_reuses_cache_for_same_effective_config() {
         skills_for_config_with_stack(&skills_manager, &cwd, &config_layer_stack, &[]).await;
     assert_eq!(outcome2.errors, outcome1.errors);
     assert_eq!(outcome2.skills, outcome1.skills);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn skills_for_config_cache_key_includes_provider_roots() {
+    let temp_home = tempfile::tempdir().expect("temp home");
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let cwd = tempfile::tempdir().expect("tempdir");
+    let root_a = tempfile::tempdir().expect("provider root a");
+    let root_b = tempfile::tempdir().expect("provider root b");
+    write_skill_under_root(root_a.path(), "a", "provider-skill-a");
+    write_skill_under_root(root_b.path(), "b", "provider-skill-b");
+    let config_layer_stack = config_stack(&codex_home, "[skills.bundled]\nenabled = false\n");
+    let skills_manager = SkillsManager::new(
+        codex_home.path().abs(),
+        /*bundled_skills_enabled*/ false,
+    );
+
+    write_provider_script(temp_home.path(), root_a.path());
+    let home_dir = temp_home.path().abs();
+    let roots_a = crate::loader::skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
+        &config_layer_stack,
+        &cwd.path().abs(),
+        Some(&home_dir),
+    )
+    .await;
+    assert!(
+        roots_a.iter().any(|root| root.path == root_a.path().abs()),
+        "expected provider root A to be part of skill roots"
+    );
+    let outcome_a =
+        skills_for_roots_with_stack(&skills_manager, roots_a, &config_layer_stack).await;
+    assert!(
+        outcome_a
+            .skills
+            .iter()
+            .any(|skill| skill.name == "provider-skill-a"),
+        "expected provider root A skill to load"
+    );
+    assert!(
+        outcome_a
+            .skills
+            .iter()
+            .all(|skill| skill.name != "provider-skill-b"),
+        "provider root B should not be visible before provider changes"
+    );
+
+    write_provider_script(temp_home.path(), root_b.path());
+    let roots_b = crate::loader::skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
+        &config_layer_stack,
+        &cwd.path().abs(),
+        Some(&home_dir),
+    )
+    .await;
+    assert!(
+        roots_b.iter().any(|root| root.path == root_b.path().abs()),
+        "expected provider root B to be part of skill roots"
+    );
+    let outcome_b =
+        skills_for_roots_with_stack(&skills_manager, roots_b, &config_layer_stack).await;
+    assert!(
+        outcome_b
+            .skills
+            .iter()
+            .any(|skill| skill.name == "provider-skill-b"),
+        "provider root changes should produce a new config cache key"
+    );
+    assert!(
+        outcome_b
+            .skills
+            .iter()
+            .all(|skill| skill.name != "provider-skill-a"),
+        "old provider-root outcome should not be reused after provider changes"
+    );
 }
 
 #[tokio::test]

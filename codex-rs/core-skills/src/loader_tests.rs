@@ -339,6 +339,135 @@ async fn loads_skills_from_home_agents_dir_for_user_scope() -> anyhow::Result<()
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn loads_provider_skill_roots_for_user_scope() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+
+    let home_folder = tmp.path().join("home");
+    let user_folder = home_folder.join("codex");
+    fs::create_dir_all(&user_folder)?;
+
+    let user_file = user_folder.join("config.toml").abs();
+    let layers = vec![ConfigLayerEntry::new(
+        ConfigLayerSource::User {
+            file: user_file,
+            profile: None,
+        },
+        TomlValue::Table(toml::map::Map::new()),
+    )];
+    let stack = ConfigLayerStack::new(
+        layers,
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )?;
+
+    let provider_root = home_folder.join(AGENTS_DIR_NAME).join("company-skills");
+    let skill_path = write_skill_at(
+        &provider_root,
+        "demo",
+        "provider-skill",
+        "from provider root",
+    );
+    write_provider_script(
+        &home_folder,
+        "company",
+        &serde_json::json!({
+            "roots": [
+                { "path": provider_root.to_string_lossy() }
+            ]
+        })
+        .to_string(),
+    )?;
+
+    let home_folder_abs = home_folder.abs();
+    let roots = skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
+        &stack,
+        &home_folder_abs,
+        Some(&home_folder_abs),
+    )
+    .await;
+    let outcome = load_skills_from_roots(roots).await;
+
+    assert!(
+        outcome.errors.is_empty(),
+        "unexpected errors: {:?}",
+        outcome.errors
+    );
+    assert!(outcome.skills.iter().any(|skill| {
+        skill.name == "provider-skill"
+            && skill.scope == SkillScope::User
+            && skill.path_to_skills_md == normalized(&skill_path)
+    }));
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn invalid_provider_json_does_not_block_home_agents_skills() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+
+    let home_folder = tmp.path().join("home");
+    let user_folder = home_folder.join("codex");
+    fs::create_dir_all(&user_folder)?;
+
+    let user_file = user_folder.join("config.toml").abs();
+    let layers = vec![ConfigLayerEntry::new(
+        ConfigLayerSource::User {
+            file: user_file,
+            profile: None,
+        },
+        TomlValue::Table(toml::map::Map::new()),
+    )];
+    let stack = ConfigLayerStack::new(
+        layers,
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )?;
+
+    let skill_path = write_skill_at(
+        &home_folder.join(AGENTS_DIR_NAME).join(SKILLS_DIR_NAME),
+        "demo",
+        "home-skill",
+        "from home agents",
+    );
+    write_provider_script(&home_folder, "company", "not json")?;
+
+    let home_folder_abs = home_folder.abs();
+    let roots = skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
+        &stack,
+        &home_folder_abs,
+        Some(&home_folder_abs),
+    )
+    .await;
+    let outcome = load_skills_from_roots(roots).await;
+
+    assert!(
+        outcome.errors.is_empty(),
+        "unexpected errors: {:?}",
+        outcome.errors
+    );
+    assert_eq!(
+        outcome.skills,
+        vec![SkillMetadata {
+            name: "home-skill".to_string(),
+            description: "from home agents".to_string(),
+            short_description: None,
+            interface: None,
+            dependencies: None,
+            policy: None,
+            path_to_skills_md: normalized(&skill_path),
+            scope: SkillScope::User,
+            plugin_id: None,
+        }]
+    );
+
+    Ok(())
+}
+
 fn write_skill(codex_home: &TempDir, dir: &str, name: &str, description: &str) -> PathBuf {
     write_skill_at(&codex_home.path().join("skills"), dir, name, description)
 }
@@ -385,6 +514,34 @@ fn write_skill_metadata_at(skill_dir: &Path, contents: &str) -> PathBuf {
 
 fn write_skill_interface_at(skill_dir: &Path, contents: &str) -> PathBuf {
     write_skill_metadata_at(skill_dir, contents)
+}
+
+#[cfg(unix)]
+fn write_provider_script(home_dir: &Path, name: &str, stdout: &str) -> anyhow::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let provider_dir = home_dir
+        .join(AGENTS_DIR_NAME)
+        .join("codex")
+        .join("skill-root-providers.d");
+    fs::create_dir_all(&provider_dir)?;
+    let provider_path = provider_dir.join(name);
+    fs::write(
+        &provider_path,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' {}\n",
+            shell_single_quote(stdout)
+        ),
+    )?;
+    let mut permissions = fs::metadata(&provider_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&provider_path, permissions)?;
+    Ok(provider_path)
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[tokio::test]
@@ -1895,20 +2052,18 @@ async fn skill_roots_include_admin_with_lowest_priority() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cfg = make_config(&codex_home).await;
 
-    let scopes: Vec<SkillScope> = super::skill_roots(
-        Some(Arc::clone(&LOCAL_FS)),
+    let scopes: Vec<SkillScope> = super::skill_roots_from_layer_stack(
+        Arc::clone(&LOCAL_FS),
         &cfg.config_layer_stack,
         &cfg.cwd,
-        Vec::new(),
+        /*home_dir*/ None,
     )
     .await
     .into_iter()
     .map(|root| root.scope)
     .collect();
-    let mut expected = vec![SkillScope::User, SkillScope::System];
-    if home_dir().is_some() {
-        expected.insert(1, SkillScope::User);
-    }
-    expected.push(SkillScope::Admin);
-    assert_eq!(scopes, expected);
+    assert_eq!(
+        scopes,
+        vec![SkillScope::User, SkillScope::System, SkillScope::Admin]
+    );
 }

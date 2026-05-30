@@ -6,6 +6,7 @@ use crate::model::SkillLoadOutcome;
 use crate::model::SkillMetadata;
 use crate::model::SkillPolicy;
 use crate::model::SkillToolDependency;
+use crate::root_provider::load_provider_roots;
 use crate::system::system_cache_root_dir;
 use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
@@ -256,6 +257,15 @@ async fn skill_roots_with_home_dir(
     plugin_skill_roots: Vec<PluginSkillRoot>,
 ) -> Vec<SkillRoot> {
     let mut roots = skill_roots_from_layer_stack_inner(config_layer_stack, home_dir, fs.clone());
+    let codex_home = codex_home_from_layer_stack(config_layer_stack);
+    let provider_roots = load_provider_roots(cwd, home_dir, codex_home.as_ref()).await;
+    roots.extend(provider_roots.into_iter().map(|path| SkillRoot {
+        path,
+        scope: SkillScope::User,
+        file_system: Arc::clone(&LOCAL_FS),
+        plugin_id: None,
+        plugin_root: None,
+    }));
     roots.extend(plugin_skill_roots.into_iter().map(|root| SkillRoot {
         path: root.path,
         scope: SkillScope::User,
@@ -266,6 +276,19 @@ async fn skill_roots_with_home_dir(
     roots.extend(repo_agents_skill_roots(fs, config_layer_stack, cwd).await);
     dedupe_skill_roots_by_path(&mut roots);
     roots
+}
+
+fn codex_home_from_layer_stack(config_layer_stack: &ConfigLayerStack) -> Option<AbsolutePathBuf> {
+    config_layer_stack
+        .get_layers(
+            ConfigLayerStackOrdering::HighestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .find_map(|layer| match &layer.name {
+            ConfigLayerSource::User { .. } => layer.config_folder(),
+            _ => None,
+        })
 }
 
 fn skill_roots_from_layer_stack_inner(

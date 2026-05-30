@@ -7,6 +7,7 @@ mod mention_counts;
 pub mod model;
 pub mod remote;
 pub mod render;
+pub(crate) mod root_provider;
 pub mod system;
 
 pub(crate) use invocation_utils::build_implicit_skill_path_indexes;
