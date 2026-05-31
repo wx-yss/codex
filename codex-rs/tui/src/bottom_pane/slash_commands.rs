@@ -324,6 +324,7 @@ mod tests {
             commands,
             vec![
                 SlashCommand::Ide,
+                SlashCommand::Consensus,
                 SlashCommand::Copy,
                 SlashCommand::Raw,
                 SlashCommand::Diff,

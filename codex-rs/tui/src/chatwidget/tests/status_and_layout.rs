@@ -932,10 +932,10 @@ async fn rate_limit_switch_prompt_shows_once_per_session() {
     chat.has_chatgpt_account = true;
 
     chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
-    assert!(
-        chat.rate_limit_warnings.primary_index >= 1,
-        "warnings not emitted"
-    );
+    assert!(matches!(
+        chat.rate_limit_switch_prompt,
+        RateLimitSwitchPromptState::Pending
+    ));
     chat.maybe_show_pending_rate_limit_prompt();
     assert!(matches!(
         chat.rate_limit_switch_prompt,

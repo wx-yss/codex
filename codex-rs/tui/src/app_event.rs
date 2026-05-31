@@ -581,6 +581,9 @@ pub(crate) enum AppEvent {
     /// resize-reflow tail renderer.
     BeginThreadSwitchHistoryReplayBuffer,
 
+    /// Show the most recent saved consensus compaction file mentioned in this TUI transcript.
+    ShowLatestConsensusCompaction,
+
     InsertHistoryCell(Box<dyn HistoryCell>),
 
     /// Finish buffering initial resume replay after all replay events have been queued.

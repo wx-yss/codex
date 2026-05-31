@@ -227,6 +227,10 @@ impl ChatWidget {
                 }
                 self.app_event_tx.compact();
             }
+            SlashCommand::Consensus => {
+                self.app_event_tx
+                    .send(AppEvent::ShowLatestConsensusCompaction);
+            }
             SlashCommand::Review => {
                 self.open_review_popup();
             }
@@ -1082,6 +1086,7 @@ impl ChatWidget {
             | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Diff
+            | SlashCommand::Consensus
             | SlashCommand::Rename
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback

@@ -7,8 +7,57 @@ use super::resize_reflow::trailing_run_start;
 use super::*;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
+const YSS_CONSENSUS_COMPACTION_MARKER: &str = "/.agents/consensus-compactions/";
 
 impl App {
+    fn show_latest_consensus_compaction(&mut self, tui: &mut tui::Tui) {
+        let transcript_width = self
+            .chat_widget
+            .history_wrap_width(tui.terminal.last_known_screen_size.width);
+        let Some(path) = latest_consensus_compaction_path(&self.transcript_cells, transcript_width)
+        else {
+            self.chat_widget.add_info_message(
+                "No consensus compaction file found in this session.".to_string(),
+                /*hint*/ None,
+            );
+            return;
+        };
+
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                self.chat_widget.add_error_message(format!(
+                    "Failed to read consensus file metadata: {} ({err})",
+                    path.display()
+                ));
+                return;
+            }
+        };
+        if !metadata.is_file() {
+            self.chat_widget
+                .add_error_message(format!("Consensus path is not a file: {}", path.display()));
+            return;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) => {
+                self.chat_widget.add_error_message(format!(
+                    "Failed to read consensus file: {} ({err})",
+                    path.display()
+                ));
+                return;
+            }
+        };
+
+        let mut lines = vec![
+            Line::from(format!("Consensus file: {}", path.display())),
+            Line::from(""),
+        ];
+        lines.extend(content.lines().map(|line| Line::from(line.to_string())));
+        self.chat_widget.add_plain_history_lines(lines);
+    }
+
     pub(super) async fn handle_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -192,8 +241,14 @@ impl App {
             AppEvent::BeginThreadSwitchHistoryReplayBuffer => {
                 self.begin_thread_switch_history_replay_buffer();
             }
+            AppEvent::ShowLatestConsensusCompaction => {
+                self.show_latest_consensus_compaction(tui);
+            }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
+                let transcript_width = self
+                    .chat_widget
+                    .history_wrap_width(tui.terminal.last_known_screen_size.width);
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
                     t.insert_cell(cell.clone());
                     tui.frame_requester().schedule_frame();
@@ -203,16 +258,10 @@ impl App {
                     self.insert_history_cell_lines_with_initial_replay_buffer(
                         tui,
                         cell.as_ref(),
-                        self.chat_widget
-                            .history_wrap_width(tui.terminal.last_known_screen_size.width),
+                        transcript_width,
                     );
                 } else {
-                    self.insert_history_cell_lines(
-                        tui,
-                        cell.as_ref(),
-                        self.chat_widget
-                            .history_wrap_width(tui.terminal.last_known_screen_size.width),
-                    );
+                    self.insert_history_cell_lines(tui, cell.as_ref(), transcript_width);
                 }
             }
             AppEvent::EndInitialHistoryReplayBuffer => {
@@ -2173,5 +2222,89 @@ impl App {
                 AppRunControl::Exit(ExitReason::UserRequested)
             }
         }
+    }
+}
+
+fn latest_consensus_compaction_path(
+    transcript_cells: &[Arc<dyn HistoryCell>],
+    width: u16,
+) -> Option<PathBuf> {
+    transcript_cells.iter().rev().find_map(|cell| {
+        let text = history_cell_transcript_text(cell.as_ref(), width);
+        consensus_compaction_path_from_text(&text)
+    })
+}
+
+fn consensus_compaction_path_from_text(text: &str) -> Option<PathBuf> {
+    let marker_start = text.find(YSS_CONSENSUS_COMPACTION_MARKER)?;
+    let start = text[..marker_start]
+        .rfind(|ch: char| ch.is_whitespace() || matches!(ch, '`' | '(' | '[' | '"'))
+        .map_or(0, |idx| idx + 1);
+    let candidate = text[start..]
+        .chars()
+        .take_while(|ch| !ch.is_whitespace() && !matches!(ch, '`' | ')' | ']' | '"'))
+        .collect::<String>();
+    let markdown_end = candidate.find(".md")? + ".md".len();
+    Some(PathBuf::from(&candidate[..markdown_end]))
+}
+
+fn history_cell_transcript_text(cell: &dyn HistoryCell, width: u16) -> String {
+    cell.transcript_lines(width)
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .into_iter()
+                .map(|span| span.content.into_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consensus_path_from_plain_text() {
+        let text = "  /Users/alice/.agents/consensus-compactions/20260531/03-topic.md";
+
+        assert_eq!(
+            consensus_compaction_path_from_text(text),
+            Some(PathBuf::from(
+                "/Users/alice/.agents/consensus-compactions/20260531/03-topic.md"
+            ))
+        );
+    }
+
+    #[test]
+    fn consensus_path_from_markdown_link() {
+        let text = "[03-topic.md](/home/bob/.agents/consensus-compactions/20260531/03-topic.md)";
+
+        assert_eq!(
+            consensus_compaction_path_from_text(text),
+            Some(PathBuf::from(
+                "/home/bob/.agents/consensus-compactions/20260531/03-topic.md"
+            ))
+        );
+    }
+
+    #[test]
+    fn consensus_path_ignores_non_markdown_file() {
+        let text = "/Users/alice/.agents/consensus-compactions/20260531/03-topic.txt";
+
+        assert_eq!(consensus_compaction_path_from_text(text), None);
+    }
+
+    #[test]
+    fn consensus_path_allows_sentence_punctuation_after_markdown_extension() {
+        let text = "/Users/alice/.agents/consensus-compactions/20260531/03-topic.md.";
+
+        assert_eq!(
+            consensus_compaction_path_from_text(text),
+            Some(PathBuf::from(
+                "/Users/alice/.agents/consensus-compactions/20260531/03-topic.md"
+            ))
+        );
     }
 }

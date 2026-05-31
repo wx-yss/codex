@@ -34,6 +34,7 @@ pub enum SlashCommand {
     Fork,
     Init,
     Compact,
+    Consensus,
     Plan,
     Goal,
     Agent,
@@ -83,6 +84,7 @@ impl SlashCommand {
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
+            SlashCommand::Consensus => "show the latest saved consensus compaction",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
@@ -170,6 +172,7 @@ impl SlashCommand {
             SlashCommand::Copy
                 | SlashCommand::Raw
                 | SlashCommand::Diff
+                | SlashCommand::Consensus
                 | SlashCommand::Mention
                 | SlashCommand::Status
                 | SlashCommand::Ide
@@ -200,6 +203,7 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
+            | SlashCommand::Consensus
             | SlashCommand::Copy
             | SlashCommand::Raw
             | SlashCommand::Rename
@@ -282,6 +286,9 @@ mod tests {
         assert!(SlashCommand::Raw.available_during_task());
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
+        assert!(SlashCommand::Consensus.available_during_task());
+        assert!(SlashCommand::Consensus.available_in_side_conversation());
+        assert!(!SlashCommand::Consensus.supports_inline_args());
     }
 
     #[test]
